@@ -1,0 +1,335 @@
+---
+title: "`QC test"
+author: "`r config::get(file = 'Config1.yml')$document$author`"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    keep_tex: true
+    latex_engine: pdflatex
+    fig_caption: yes
+    highlight: haddock
+    number_sections: yes
+
+knit: (
+  function(inputFile, encoding) {
+    config=config::get(file = 'Config1.yml') 
+    
+    pSubTitle <- paste0("QC_output.pdf")
+    
+    DIR=file.path(config$base_output_dir)
+    
+    rmarkdown::render( 
+      input       = inputFile, 
+      encoding    = encoding, 
+      output_file = pSubTitle,
+      output_dir =DIR )})
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F,include=F)
+options(knitr.table.format = 'markdown',encoding = 'UTF-8',warnings =F, message=F ) 
+
+```
+
+```{r}
+#install.packages('Seurat')
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+```
+
+
+```{r}
+
+```
+
+
+
+```{r,include=T}
+# Load configuration for the default environment
+# Check and create output directory if it doesn't exist
+config <- config::get(file = 'Config1.yaml')
+output_dir <- file.path(config$base_output_dir, config$PT_ID)
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+
+# Define paths using the configuration
+Path <- config$root_path
+SRR_path <- file.path(Path, config$SRA_dir)
+Rawdata_path <- file.path(Path, config$R_dir, config$Rawdata_dir)
+SRA_sample=read.csv(file.path(SRR_path,"SraRunInfo.csv" ))
+SRA_sample_anno=SRA_sample[,c("LibraryName","Run")]%>%mutate(Group=c(rep("Gout_SYN",3),rep("Gout_PBMC",7),rep("Control_PBMC",5)))%>%setNames(c("Sample_ID","SRR_number","Group"))
+
+knitr::kable(SRA_sample_anno,caption = "Sample information")
+```
+
+```{r}
+Raw_scdata=list()
+ggfigure=list()
+for ( i in SRA_sample_anno$SRR_number ) {
+ case1=i
+ SC_out=file.path(SRR_path,case1,"run_count","outs","filtered_feature_bc_matrix" )
+ pbmc.data=Read10X(data.dir = SC_out)
+
+ pbmc <- CreateSeuratObject(counts = pbmc.data, project = case1, min.cells = 3, min.features = 200)
+ pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+ Raw_scdata[[i]]=pbmc
+# Visualize QC metrics as a violin plot
+ ggfigure[[i]]=VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+ 
+}
+ 
+```
+
+
+```{r,fig.width=16,fig.height=32,eval=F}
+# Out=cowplot::plot_grid(ggfigure,nrow=length(ggfigure),labels = names(ggfigure) )
+# ggfigure[[2]]
+# p2=ggfigure[[2]]
+# p3=ggfigure[[3]]
+# library(ggplot2)
+# library(gtable)
+# g2 <- ggplotGrob(p2)
+# g3 <- ggplotGrob(p3)
+# g <- rbind(g2, g3, size = "first")
+# g$widths <- grid::unit.pmax(g2$widths, g3$widths)
+# grid::grid.newpage()
+# grid::grid.draw()
+
+ 
+```
+
+
+```{r,fig.width=16,fig.height=32,include=T}
+cowplot::plot_grid(plotlist=ggfigure,ncol=3,nrow=5,labels = names(ggfigure),label_y = 1.01)
+
+```
+
+```{r}
+Metadata=list()
+for ( i in names(Raw_scdata) ) {
+   Data=Raw_scdata[[i]]
+   Metadata[[i]]=data.frame(nGene=Data[["nCount_RNA"]],nUMI=Data[["nFeature_RNA"]],Percent_MT=Data[["percent.mt"]])%>%setNames(c("nGene","nUMI","percent.mito"))
+}
+
+Metadata[[1]]
+names(Metadata)
+```
+
+
+# filter cells (inspired by https://matthieuxmoreau.github.io/EarlyPallialNeurogenesis/html-Reports/Quality_Control.html)
+
+```{r}
+Clean_cell_list=list()
+plot_list=list()
+for (i in names(Metadata) ){
+ 
+   # Set low and high thresholds Mito percentage
+  Cell.QC.Stat=Metadata[[i]]
+  
+  max.mito.thr <- median(Cell.QC.Stat$percent.mito) + 3*mad(Cell.QC.Stat$percent.mito)
+  min.mito.thr <- median(Cell.QC.Stat$percent.mito) - 3*mad(Cell.QC.Stat$percent.mito)
+  p1 <- ggplot(Cell.QC.Stat, aes(x=nGene, y=percent.mito)) +
+      geom_point() +geom_hline(aes(yintercept = max.mito.thr), colour = "red", linetype = 2) +
+      geom_hline(aes(yintercept = min.mito.thr), colour = "red", linetype = 2) +
+      annotate(geom = "text",size=2 ,label = paste0(as.numeric(table(Cell.QC.Stat$percent.mito > max.mito.thr | Cell.QC.Stat$percent.mito < min.mito.thr)[2])," cells removed\n", as.numeric(table(Cell.QC.Stat$percent.mito > max.mito.thr | Cell.QC.Stat$percent.mito < min.mito.thr)[1])," cells remain"), x = max(Cell.QC.Stat$nGene)/2, y = max(Cell.QC.Stat$percent.mito)/2)
+p1=ggExtra::ggMarginal(p1, type = "histogram", fill="lightgrey", bins=100)   
+p1
+Cell.QC.Stat2 <- Cell.QC.Stat %>% filter(percent.mito < max.mito.thr) %>% filter(percent.mito > min.mito.thr)
+ 
+# Set high threshold on the number of transcripts
+max.nUMI.thr <- median(log10(Cell.QC.Stat2$nUMI)) + 3*mad(log10(Cell.QC.Stat$nUMI))
+min.Genes.thr <- median(log10(Cell.QC.Stat2$nGene)) - 3*mad(log10(Cell.QC.Stat2$nGene))
+max.Genes.thr <- median(log10(Cell.QC.Stat2$nGene)) + 3*mad(log10(Cell.QC.Stat2$nGene))
+
+ # Gene/UMI scatter plot before filtering
+p2 <- ggplot(Cell.QC.Stat2, aes(x=log10(nUMI), y=log10(nGene))) +
+      geom_point() +
+      geom_smooth(method="lm") +
+      geom_hline(aes(yintercept = min.Genes.thr), colour = "green", linetype = 2) +
+      geom_hline(aes(yintercept = max.Genes.thr), colour = "green", linetype = 2) +
+      geom_vline(aes(xintercept = max.nUMI.thr), colour = "red", linetype = 2)
+
+p2=ggExtra::ggMarginal(p2, type = "histogram", fill="lightgrey")
+  
+  # Set low and hight thresholds on the number of detected genes
+
+
+
+
+# filtered by nGene and uUMI
+Cell.QC.Stat3 <- Cell.QC.Stat2 %>% filter(log10(nGene) > min.Genes.thr) %>% filter(log10(nUMI) < max.nUMI.thr)
+lm.model <- lm(data = Cell.QC.Stat2, formula = log10(nGene) ~ log10(nUMI))
+p3 <- ggplot(Cell.QC.Stat3, aes(x=log10(nUMI), y=log10(nGene))) +
+  geom_point() +
+  geom_smooth(method="lm") +
+  geom_hline(aes(yintercept = min.Genes.thr), colour = "green", linetype = 2) +
+  geom_hline(aes(yintercept = max.Genes.thr), colour = "green", linetype = 2) +
+  geom_vline(aes(xintercept = max.nUMI.thr), colour = "red", linetype = 2) +
+  geom_abline(intercept =lm.model$coefficients[1] - 0.2 , slope = lm.model$coefficients[2], color="orange") +
+  annotate(geom = "text", size=2,label = paste0(dim(Cell.QC.Stat3)[1], " QC passed cells"), x =3.5, y = 4.5)
+
+p3=ggExtra::ggMarginal(p3, type = "histogram", fill="lightgrey")
+#  Cells to exclude lie below an intersept offset of -0.18
+Cell.QC.Stat3$valideCells <- log10(Cell.QC.Stat3$nGene) > (log10(Cell.QC.Stat3$nUMI) * lm.model$coefficients[2] + 
+                                                           (lm.model$coefficients[1] - 0.2))
+
+p4 <- ggplot(Cell.QC.Stat3, aes(x=log10(nUMI), y=log10(nGene))) +
+  geom_point(aes(colour = valideCells)) +
+  geom_smooth(method="lm") +
+  geom_abline(intercept = lm.model$coefficients[1] - 0.2 , slope = lm.model$coefficients[2], color="orange") + 
+  theme(legend.position="none") +
+  annotate(geom = "text",size=2, label = paste0(as.numeric(table(Cell.QC.Stat$valideCells)[2]), " QC passed cells\n",
+                                         as.numeric(table(Cell.QC.Stat$valideCells)[1]), " QC filtered"), x = 4, y = 3.8)
+
+p4 
+# Remove unvalid cells
+Cell.QC.Stat4 <- Cell.QC.Stat3 %>% filter(valideCells)  
+ 
+Clean_cell_list[[i]]=Cell.QC.Stat4
+
+plot_row=cowplot::plot_grid(p1,p2,p3,p4,nrow=1)
+ title <- cowplot::ggdraw() + 
+  cowplot::draw_label(i,
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )
+out=cowplot::plot_grid(
+  title, plot_row,
+  ncol = 1,
+  # rel_heights values control vertical title margins
+  rel_heights = c(0.1, 1)
+)
+ plot_list[[i]]=out
+}
+
+ 
+ 
+```
+
+
+```{r}
+process_qc <- function(metadata_entry, dataset_name) {
+ library(ggplot2)
+ library(ggExtra)
+ library(dplyr)
+  library(cowplot)
+  # Set thresholds based on mitochondrial content
+  max.mito.thr <- median(metadata_entry$percent.mito) + 3 * mad(metadata_entry$percent.mito)
+  min.mito.thr <- median(metadata_entry$percent.mito) - 3 * mad(metadata_entry$percent.mito)
+  
+  # Create mitochondrial content plot
+  p1 <- ggplot(metadata_entry, aes(x = nGene, y = percent.mito)) +
+    geom_point() +
+    geom_hline(aes(yintercept = max.mito.thr), colour = "red", linetype = 2) +
+    geom_hline(aes(yintercept = min.mito.thr), colour = "red", linetype = 2) +
+    annotate("text", size = 2, 
+             label = sprintf("%d cells removed\n%d cells remain",
+                     sum(metadata_entry$percent.mito > max.mito.thr | metadata_entry$percent.mito < min.mito.thr),
+                     nrow(metadata_entry) - sum(metadata_entry$percent.mito > max.mito.thr | metadata_entry$percent.mito < min.mito.thr)),
+             x = max(metadata_entry$nGene) / 2, 
+             y = max(metadata_entry$percent.mito) / 2)
+  p1 <- ggExtra::ggMarginal(p1, type = "histogram", fill = "lightgrey", bins = 100)
+
+  # Filter cells based on mitochondrial content
+  metadata_filtered <- metadata_entry %>% 
+    filter(percent.mito < max.mito.thr, percent.mito > min.mito.thr)
+  
+  # Set high threshold on the number of transcripts and genes
+  max.nUMI.thr <- median(log10(metadata_filtered$nUMI)) + 3 * mad(log10(metadata_filtered$nUMI))
+  min.Genes.thr <- median(log10(metadata_filtered$nGene)) - 3 * mad(log10(metadata_filtered$nGene))
+  max.Genes.thr <- median(log10(metadata_filtered$nGene)) + 3 * mad(log10(metadata_filtered$nGene))
+  
+  # Gene/UMI scatter plot before filtering
+  p2 <- ggplot(metadata_filtered, aes(x = log10(nUMI), y = log10(nGene))) +
+    geom_point() +
+    geom_smooth(method = "lm") +
+    geom_hline(aes(yintercept = min.Genes.thr), colour = "green", linetype = 2) +
+    geom_hline(aes(yintercept = max.Genes.thr), colour = "green", linetype = 2) +
+    geom_vline(aes(xintercept = max.nUMI.thr), colour = "red", linetype = 2)
+  p2 <- ggExtra::ggMarginal(p2, type = "histogram", fill = "lightgrey")
+  
+  # Filter by nGene and nUMI
+  final_filtered <- metadata_filtered %>%
+    filter(log10(nGene) > min.Genes.thr, log10(nUMI) < max.nUMI.thr)
+  
+  # Linear model for gene-UMI relationship
+  lm.model <- lm(log10(nGene) ~ log10(nUMI), data = final_filtered)
+  
+  # Final QC scatter plot
+  p3 <- ggplot(final_filtered, aes(x = log10(nUMI), y = log10(nGene))) +
+    geom_point() +
+    geom_smooth(method = "lm") +
+    geom_hline(aes(yintercept = min.Genes.thr), colour = "green", linetype = 2) +
+    geom_hline(aes(yintercept = max.Genes.thr), colour = "green", linetype = 2) +
+    geom_vline(aes(xintercept = max.nUMI.thr), colour = "red", linetype = 2) +
+    geom_abline(intercept = lm.model$coefficients[1] - 0.2, slope = lm.model$coefficients[2], color = "orange") +
+    annotate("text", size = 2, label = sprintf("%d QC passed cells", nrow(final_filtered)), x = 3.5, y = 4.5)
+  p3 <- ggExtra::ggMarginal(p3, type = "histogram", fill = "lightgrey")
+
+  # Plot grid and titles
+  plot_row <- plot_grid(p1, p2, p3, nrow = 1)
+  title_plot <- ggdraw() + 
+    draw_label(dataset_name, fontface = 'bold', x = 0, hjust = 0) +
+    theme(plot.margin = margin(0, 0, 0, 7))
+  out_plot <- plot_grid(title_plot, plot_row, ncol = 1, rel_heights = c(0.1, 1))
+
+  return(list(clean_data = final_filtered, plot = out_plot))
+}
+
+```
+
+
+```{r}
+Clean_cell_list <- list()
+plot_list <- list()
+
+for (i in names(Metadata)) {
+  results <- process_qc(Metadata[[i]], i)
+  Clean_cell_list[[i]] <- results$clean_data
+  plot_list[[i]] <- results$plot
+}
+```
+
+
+# Plot filter process
+```{r,fig.width=18,fig.height=24,include=T}
+library(gridExtra)
+do.call("grid.arrange", c(plot_list, ncol=2,nrow=8))
+```
+
+
+```{r}
+Clean_scdata=list()
+for (i in 1:length(Raw_scdata)){
+Clean_data=Clean_cell_list[[i]]
+
+Clean_ID=Clean_data%>%mutate(State="Good",ID=rownames(.))
+scData=Raw_scdata[[i]]
+scData[["CellName"]]=colnames(scData)
+Clean_scdata[[i]]= subset(scData , subset = CellName %in% rownames(Clean_data))
+
+}
+
+```
+
+
+```{r}
+if (! file.exists(file.path(Rawdata_path,"Clean_scRNA_and_metadata.rdata"))) {
+ save(SRA_sample_anno,Clean_scdata,file=file.path(Rawdata_path,"Clean_scRNA_and_metadata.rdata"))
+}  
+ 
+```
+
+
+```{r}
+knitr::knit_exit()
+```
+

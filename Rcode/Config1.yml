@@ -1,0 +1,9 @@
+default:
+  document:
+     author: "Yang Lyu" 
+  root_path: "/media/yang/Hirbe_lab_Drive_5/Gout_scRNA"
+  SRA_dir: "SRA"
+  R_dir: "R"
+  Rawdata_dir: "Rawdata"
+  base_output_dir: "/media/yang/Hirbe_lab_Drive_5/Gout_scRNA/Report"
+
