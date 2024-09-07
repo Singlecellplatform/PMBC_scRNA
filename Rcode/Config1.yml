@@ -1,6 +1,6 @@
 default:
   document:
-     author: "Yang Lyu" 
+     author: "Liu cong" 
   root_path: "/media/yang/Hirbe_lab_Drive_5/Gout_scRNA"
   SRA_dir: "SRA"
   R_dir: "R"
