@@ -1,2 +1,1 @@
-
-1. QC test
+Run code by bash file.sh
