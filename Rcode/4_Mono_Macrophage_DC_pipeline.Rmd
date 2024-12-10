@@ -1,0 +1,216 @@
+---
+title: "Monocyte maintype"
+author: "`r config::get(file = 'Config.yml')$document$author`"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    keep_tex: true
+    latex_engine: pdflatex
+    fig_caption: yes
+    highlight: haddock
+    number_sections: yes
+knit: (
+  function(inputFile, encoding) {
+    Config=config::get(file = 'Config.yml') 
+    
+    pSubTitle <- paste0("Monocyte maintype",".pdf")
+    
+    base_output_dir <- Config$base_output_dir
+ 
+    rmarkdown::render( 
+      input       = inputFile, 
+      encoding    = encoding, 
+      output_file = pSubTitle,
+      output_dir = base_output_dir )}
+    )
+
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F,include=T,warning=F)
+```
+
+```{r,include=F}
+rm(list=ls())
+#install.packages('Seurat')
+library(dplyr)
+library(ggplot2)
+library(scran)
+library(scuttle)
+library(bluster)
+library(SingleR)
+#library("Seurat")
+
+```
+
+```{r,include=T}
+Config=config::get(file = 'Config.yml')
+Path=Config$Path
+Rawdata_path=file.path(Path, "R/Rawdata")
+Rcode_path=file.path(Path, "R/Rcode")
+```
+
+
+```{r,include=T}
+SRA_sample=read.csv(file.path(Rawdata_path,"SraRunInfo.csv" ))
+SRA_sample_anno=SRA_sample[,c("LibraryName","Run")]%>%mutate(Group=c(rep("Gout_SYN",3),rep("Gout_PBMC",7),rep("Control_PBMC",5)))%>%setNames(c("Sample_ID","SRR_number","Group"))
+scdata_Samples_ID2=SRA_sample[,c("LibraryName","Run")]%>%mutate(Group=c(rep("Gout_SYN",3),rep("Gout_PBMC",7),rep("Control_PBMC",5)))%>%setNames(c("Sample_ID","SRR_number","Group"))%>%mutate(Sample_ID2=c(paste0("Gout_SYN_",c(1:3)),paste0("Gout_PBMC_",c(1:7)),paste0("Control_PBMC_",c(1:5)) ))
+```
+
+
+```{r,include=T}
+knitr::kable(scdata_Samples_ID2,caption = "Sample information")
+ 
+```
+
+```{r}
+Main_celltype=c("B_cell","CD4+_T_cell","CD8+_T_cell","T_cell","NK_cell","Monocyte","Neutrophils","Macrophage","DC" ,"Platelets")
+All_celltype_color=c(RColorBrewer::brewer.pal(n = 9, name = "Set1") ,RColorBrewer::brewer.pal(n = 2, name = "Set2"))
+names(All_celltype_color)=c(Main_celltype,"Other") 
+```
+
+## Monocyte in PMBC
+```{r}
+
+load(file.path(Rawdata_path,"Monocyte_maintype.rdata"))
+
+```
+
+```{r,eval=F}
+# set.seed(1234)
+# hpca.ont <- celldex::HumanPrimaryCellAtlasData(ensembl=F, cell.ont="nonna")
+# bpe.ont <- celldex::BlueprintEncodeData(ensembl=F, cell.ont="nonna")
+# # Using the same sets of genes:
+# shared <- intersect(rownames(hpca.ont), rownames(bpe.ont))
+# hpca.ont_shared <- hpca.ont[shared,]
+# bpe.ont_shared <- bpe.ont[shared,]
+# library(SingleR)
+# 
+# Mono_Pred= SingleR::SingleR(test =PBMC_Monocyte_sce,assay.type.test=1,  ref = list(BPE=bpe.ont_shared , HPCA=hpca.ont_shared ), labels = list(bpe.ont_shared$label.fine, hpca.ont_shared$label.fine))
+# 
+# table(Mono_Pred$pruned.labels)%>%as.data.frame()%>%arrange(desc(Freq))
+```
+
+
+```{r,eval=T}
+if (!file.exists(file.path(Rawdata_path,"Monocyte_maintype.rdata"))) {
+ load(file.path(Rawdata_path,"PBMC_subtype_update.rdata"))
+ PBMC_Monocyte_sce=subset(PBMC_sce_combine2,,labels%in%c("Monocyte","DC","Macrophage"))
+ ref=celldex::MonacoImmuneData(ensembl = F,cell.ont = "nonna")
+ Mono_Pred= SingleR::SingleR(test =PBMC_Monocyte_sce,assay.type.test=1,  ref = ref, labels =ref$label.fine,quantile = 0.7 )
+ Monosubtype=data.frame(Monosubtype=Mono_Pred$pruned.labels)%>%mutate(Mono_subtype=ifelse(grepl("monocytes|dendritic",Monosubtype) , Monosubtype,"Other_monocyte"))
+
+ set.seed(12345)
+ PBMC_Monocyte_sce2<- scater::runPCA(PBMC_Monocyte_sce, name="PCA2",ncomponents=10)
+ set.seed(12345)
+ PBMC_Monocyte_sce3=scater::runUMAP(PBMC_Monocyte_sce2,name="UMAP", dimred="PCA2",  n_neighbors = 10)
+ 
+ PBMC_Monocyte_sce3$Mono_subtype=Monosubtype$Mono_subtype
+ save(PBMC_Monocyte_sce3, file=file.path(Rawdata_path,"Monocyte_maintype.rdata"))
+} else {
+  load (file.path(Rawdata_path,"Monocyte_maintype.rdata"))
+}
+```
+
+
+```{r,fig.width=12,fig.height=14,include=T}
+scater::plotUMAP (PBMC_Monocyte_sce3,colour_by="Mono_subtype" )+facet_wrap(PBMC_Monocyte_sce3$batch)
+```
+
+
+```{r,fig.height=16,fig.width=12,warning=F,eval=T}
+Control_sce=PBMC_Monocyte_sce3%>%subset(.,,grepl("Control",batch))
+Gout_type1=PBMC_Monocyte_sce3%>%subset(.,,batch%in%c("Gout_PBMC_3","Gout_PBMC_7"))
+Gout_type2=PBMC_Monocyte_sce3%>%subset(.,,batch%in%c("Gout_PBMC_1","Gout_PBMC_2","Gout_PBMC_4","Gout_PBMC_5","Gout_PBMC_6"))
+Group_set=rbind(data.frame(Sample=unique(Control_sce$batch),Group="Control" ),data.frame(Sample=unique(Gout_type1$batch),Group="Gout_type1" ),data.frame(Sample=unique(Gout_type2$batch),Group="Gout_type2" ))
+```
+
+
+```{r}
+celltype_color=RColorBrewer::brewer.pal(name="Accent",n=8)
+names(celltype_color)=unique(PBMC_Monocyte_sce3$Mono_subtype)
+```
+
+
+```{r,fig.height=8,fig.width=12,warning=F,include=F}
+
+P1=scater::plotUMAP(Control_sce, colour_by="Mono_subtype")+scale_color_manual(values =celltype_color )+facet_wrap(colData(Control_sce)$batch,nrow=1)+theme(panel.spacing = unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 1), 
+        strip.background = element_rect(color = "black", size = 1))
+
+P2= scater::plotUMAP(Gout_type1, colour_by="Mono_subtype")+scale_color_manual(values =celltype_color )+facet_wrap(colData(Gout_type1)$batch,nrow=1)+theme(panel.spacing = unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 1), 
+        strip.background = element_rect(color = "black", size = 1))
+P2_2=gridExtra::grid.arrange(grobs=list(P2,grid::nullGrob()),nrow=1, widths = 3:1)
+
+
+P3=scater::plotUMAP(Gout_type2, colour_by="Mono_subtype")+scale_color_manual(values =celltype_color )+facet_wrap(colData(Gout_type2)$batch,nrow=1)+theme(panel.spacing = unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 1), 
+        strip.background = element_rect(color = "black", size = 1))
+  
+```
+
+
+ 
+```{r,fig.height=16,fig.width=12,warning=F,include=T}
+cowplot::plot_grid(plotlist=list(P1,P2_2,P3),nrow=3)
+```
+
+
+```{r}
+Classical_kmeans2=data.frame(Cluster=PBMC_Monocyte_sce3$Mono_subtype,Sample=PBMC_Monocyte_sce3$batch) 
+Classical_kmeans_data2=Classical_kmeans2%>% group_by(Sample,Cluster)%>%summarise(n=n())
+Classical_kmeans_data_n2= Classical_kmeans_data2%>%group_by(Sample)%>%summarise(total=sum(n))
+Classical_kmeans_data3=Classical_kmeans_data2%>%left_join(.,Classical_kmeans_data_n2)%>%mutate(Per=scales::percent( n/total),Proportion=n/total)%>%left_join(.,Group_set)
+```
+
+
+```{r}
+library(ggrepel)
+Plotlist=list()
+# Names=c("Control","Gout_PBMC_type1","Gout_PBMC_type2")
+plist=list()
+for ( i in unique(Classical_kmeans_data3$Cluster)) {
+   data=Classical_kmeans_data3%>%dplyr::filter(Cluster==i)
+   Plotlist[[i]]=ggplot(data,aes(x=Group,y=Proportion,fill=Group))+geom_boxplot()+geom_point()+ggtitle(i)
+   
+}
+```
+
+```{r,fig.width=14,fig.height=6,include=T}
+cowplot::plot_grid(plotlist=Plotlist,nrow=2)
+
+```
+
+```{r}
+Classical_kmeans2=data.frame(Cluster=PBMC_Monocyte_sce3$Mono_subtype,Sample=PBMC_Monocyte_sce3$batch) 
+Classical_kmeans_data2=Classical_kmeans2%>% group_by(Sample,Cluster)%>%summarise(n=n())
+Classical_kmeans_data_n2= Classical_kmeans_data2%>%group_by(Sample)%>%summarise(total=sum(n))
+Classical_kmeans_data3=Classical_kmeans_data2%>%left_join(.,Classical_kmeans_data_n2)%>%mutate(Per=scales::percent( n/total),Proportion=n/total)%>%left_join(.,Group_set)%>%mutate(Group=ifelse(Group=="Control","Control"  ,"Gout"))
+```
+
+
+```{r}
+library(ggrepel)
+Plotlist=list()
+# Names=c("Control","Gout_PBMC_type1","Gout_PBMC_type2")
+plist=list()
+for ( i in unique(Classical_kmeans_data3$Cluster)) {
+   data=Classical_kmeans_data3%>%dplyr::filter(Cluster==i)
+   Plotlist[[i]]=ggplot(data,aes(x=Group,y=Proportion,fill=Group))+geom_boxplot()+geom_point()+ggtitle(i)+ggpubr::stat_compare_means()
+   
+}
+```
+
+```{r,fig.width=14,fig.height=12,include=T}
+cowplot::plot_grid(plotlist=Plotlist,nrow=2)
+
+```
+
+
+
+```{r}
+knitr::knit_exit()
+```
+
+ 
+

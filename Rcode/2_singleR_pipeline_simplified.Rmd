@@ -1,0 +1,156 @@
+---
+title: "Seurat pipeline"
+author: "`r config::get(file = 'Config.yml')$document$author`"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    keep_tex: true
+    latex_engine: pdflatex
+    fig_caption: yes
+    highlight: haddock
+    number_sections: yes
+knit: (
+  function(inputFile, encoding) {
+    Config=config::get(file = 'Config.yml') 
+    
+    pSubTitle <- paste0("Seurat preparation",".pdf")
+    
+    base_output_dir <- Config$base_output_dir
+ 
+    rmarkdown::render( 
+      input       = inputFile, 
+      encoding    = encoding, 
+      output_file = pSubTitle,
+      output_dir = base_output_dir )}
+    )
+
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F,include=T,warning=F)
+```
+
+```{r,include=F}
+rm(list=ls())
+#install.packages('Seurat')
+library(dplyr)
+library(ggplot2)
+library(scran)
+library(scuttle)
+library(bluster)
+library(SingleR)
+#library("Seurat")
+
+```
+
+```{r,include=T}
+Config=config::get(file = 'Config.yml')
+Path=Config$Path
+Rawdata_path=file.path(Path, "R/Rawdata")
+Rcode_path=file.path(Path, "R/Rcode")
+```
+
+
+
+```{r,include=F}
+# Sample annotation
+SRA_sample=read.csv(file.path(Rawdata_path,"SraRunInfo.csv" ))
+SRA_sample_anno=SRA_sample[,c("LibraryName","Run")]%>%mutate(Group=c(rep("Gout_SYN",3),rep("Gout_PBMC",7),rep("Control_PBMC",5)))%>%setNames(c("Sample_ID","SRR_number","Group"))
+scdata_Samples_ID2=SRA_sample[,c("LibraryName","Run")]%>%mutate(Group=c(rep("Gout_SYN",3),rep("Gout_PBMC",7),rep("Control_PBMC",5)))%>%setNames(c("Sample_ID","SRR_number","Group"))%>%mutate(Sample_ID2=c(paste0("Gout_SYN_",c(1:3)),paste0("Gout_PBMC_",c(1:7)),paste0("Control_PBMC_",c(1:5)) ))
+```
+
+
+```{r,include=T}
+knitr::kable(scdata_Samples_ID2,caption = "Sample information")
+ 
+```
+
+
+```{r}
+#BiocManager::install("scRNAseq")
+# BiocManager::install("SingleR")
+# BiocManager::install("celldex")
+# library("scRNAseq")
+# library("Seurat")
+# library("sctransform")
+# library("SingleR")
+#  
+
+# hpca.se <- celldex::HumanPrimaryCellAtlasData()
+# hpca.se
+```
+
+
+```{r}
+Main_celltype=c("B_cell","CD4+_T_cell","CD8+_T_cell","T_cell","NK_cell","Monocyte","Neutrophils","Macrophage","DC" ,"Platelets")
+All_celltype_color=c(RColorBrewer::brewer.pal(n = 9, name = "Set1") ,RColorBrewer::brewer.pal(n = 2, name = "Set2"))
+names(All_celltype_color)=c(Main_celltype,"Other") 
+```
+
+
+########################################################################################33
+**only run for the first time**
+**Inspired by http://bioconductor.org/books/release/SingleRBook/annotation-diagnostics.html#based-on-the-deltas-across-cells **
+
+```{r}
+cgwtools::lsdata(file.path(Rawdata_path,"Clean_scRNA_and_metadata.rdata"))
+```
+
+
+```{r,eval=T}
+if (!file.exists(file.path(Rawdata_path,"Clean_scRNA_and_metadata.rdata"))) {
+ hpca.ont <- celldex::HumanPrimaryCellAtlasData(ensembl=F, cell.ont="nonna")
+ bpe.ont <- celldex::BlueprintEncodeData(ensembl=F, cell.ont="nonna")
+
+# Using the same sets of genes:
+ shared <- intersect(rownames(hpca.ont), rownames(bpe.ont))
+ hpca.ont_shared <- hpca.ont[shared,]
+ bpe.ont_shared <- bpe.ont[shared,]  
+####################################################################
+ load(file.path(Rawdata_path,"scRNA_and_metadata.rdata"))
+ scdata_Samples_ID=lapply(Clean_scdata, function(x) as.character(x$orig.ident)%>%unique())%>%unlist()
+  scdata_Samples_ID2=data.frame(SRR_number=scdata_Samples_ID)%>%left_join(.,SRA_sample_anno)%>%mutate(Group=c(rep("Gout_SYN",3),rep("Gout_PBMC",7),rep("Control_PBMC",5)))%>%setNames(c("Sample_ID","SRR_number","Group"))%>%mutate(Sample_ID2=c(paste0("Gout_SYN_",c(1:3)),paste0("Gout_PBMC_",c(1:7)),paste0("Control_PBMC_",c(1:5)) ))
+ pred.scData=list()
+ scData2=list()
+ for (i in 1:length(Clean_scdata)){
+  data=Clean_scdata[[i]]
+  scData=Seurat::NormalizeData(
+    object=data,
+    normalization.method = "LogNormalize",
+    scale.factor = 10000,
+    margin = 1,
+    block.size = NULL,
+    verbose = TRUE)
+  scData2[[i]]=Seurat::as.SingleCellExperiment(scData)
+  Pred= SingleR::SingleR(test = scData2[[i]],assay.type.test=1,  ref = list(BPE=bpe.ont_shared , HPCA=hpca.ont_shared ), labels = list(bpe.ont_shared$label.main, hpca.ont_shared$label.main))
+ 
+ #  All_celltype=Pred$labels 
+ #  All_celltype_anno=data.frame(labels=All_celltype)%>%mutate(label2=ifelse(labels%in%Main_celltype,labels,"Other"))
+ # Pred$labels=All_celltype_anno$label2
+  pred.scData[[i]]=Pred
+  # scData2[[i]]$labels=Pred$labels
+}
+ 
+All_labels=lapply(pred.scData, function(x) unique(x$labels) )%>%unlist()%>%unique
+celltypes=data.frame(labels=All_labels)%>%mutate(newlabels=gsub("cells","cell",labels)%>%gsub("Monocytes","Monocyte",.)%>%gsub("Monocytes","Monocyte",.)%>%gsub("Macrophages","Macrophage",.)%>%gsub("_"," ",.) %>%gsub("-"," ",.) %>%gsub(" ","_",.) )%>%mutate(newlabels=ifelse(newlabels%in%Main_celltype,newlabels,"Other"))
+Cell_anno=pred.scData
+Data=scData2
+scData_label=list()
+for(i in 1:length(Data)){
+ set.seed(1234)
+ sce=Data[[i]]
+ newlabels=data.frame( labels=Cell_anno[[i]]$labels)%>%left_join(.,celltypes)
+ cell_number=table(newlabels$newlabels)%>%as.data.frame()%>%dplyr::rename(newlabels=Var1)%>% mutate(newlabels2=ifelse(Freq>10,as.character(newlabels),"Other"))
+ newlabels2=newlabels%>%left_join(.,cell_number)
+ sce$labels=newlabels2$newlabels2
+ scData_label[[i]]=sce
+ save(scdata_Samples_ID2,scData_label,file=file.path(Rawdata_path,"Clean_scRNA_and_metadata.rdata"))
+ } 
+}
+```
+
+
+
+```{r}
+knitr::knit_exit()
+```
+

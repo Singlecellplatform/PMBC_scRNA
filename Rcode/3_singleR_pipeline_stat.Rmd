@@ -1,0 +1,242 @@
+---
+title: "PBMC main type"
+author: "`r config::get(file = 'Config.yml')$document$author`"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    keep_tex: true
+    latex_engine: pdflatex
+    fig_caption: yes
+    highlight: haddock
+    number_sections: yes
+knit: (
+  function(inputFile, encoding) {
+    Config=config::get(file = 'Config.yml') 
+    
+    pSubTitle <- paste0("PBMC_maintype",".pdf")
+    
+    base_output_dir <- Config$base_output_dir
+ 
+    rmarkdown::render( 
+      input       = inputFile, 
+      encoding    = encoding, 
+      output_file = pSubTitle,
+      output_dir = base_output_dir )}
+    )
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F,include=F,warning=F)
+```
+
+
+
+```{r,include=F}
+rm(list=ls())
+#install.packages('Seurat')
+#BiocManager::install("scran")
+# BiocManager::install("S4Vectors")
+# BiocManager::install("cytolib")
+# BiocManager::install("scuttle")
+#BiocManager::install("scMerge")
+
+
+# install.packages('ggrastr')
+#BiocManager::install("scater")
+#remotes::install_version("Matrix", version = "1.6-1")
+library("scater")
+#BiocManager::install("SingleR")
+library(dplyr)
+library(ggplot2)
+library(scran)
+library(scuttle)
+library(bluster)
+library(SingleR)
+#library("Seurat")
+
+```
+
+
+```{r,include=T}
+Config=config::get(file = 'Config.yml')
+Path=Config$Path
+Rawdata_path=file.path(Path, "R/Rawdata")
+Rcode_path=file.path(Path, "R/Rcode")
+```
+
+
+
+```{r,include=F}
+# Sample annotation
+SRA_sample=read.csv(file.path(Rawdata_path,"SraRunInfo.csv" ))
+SRA_sample_anno=SRA_sample[,c("LibraryName","Run")]%>%mutate(Group=c(rep("Gout_SYN",3),rep("Gout_PBMC",7),rep("Control_PBMC",5)))%>%setNames(c("Sample_ID","SRR_number","Group"))
+scdata_Samples_ID2=SRA_sample[,c("LibraryName","Run")]%>%mutate(Group=c(rep("Gout_SYN",3),rep("Gout_PBMC",7),rep("Control_PBMC",5)))%>%setNames(c("Sample_ID","SRR_number","Group"))%>%mutate(Sample_ID2=c(paste0("Gout_SYN_",c(1:3)),paste0("Gout_PBMC_",c(1:7)),paste0("Control_PBMC_",c(1:5)) ))
+```
+
+
+```{r,include=T}
+knitr::kable(scdata_Samples_ID2,caption = "Sample information")
+```
+
+# Set up Gout subgroup by drinking habit (# Te clinical conditions of seven patients with acute gout are shown in Table S1. Among these patients, only Case 07 was a new case, with the frst attack lasting for 19 days; all others had a disease history of 1 to>20 years, with attacks lasting 1–14 days. Cases 03 and 07 were heavy drinkers, and Case 05 drink occasionally; the other subjects did not drink.
+
+
+```{r,eval=T}
+# Merge scData
+       
+if (! file.exists(file.path(Rawdata_path,"PBMC_subtype_update.rdata"))){
+ load(file.path(Rawdata_path,"Clean_scRNA_and_metadata.rdata"))
+
+ PBMC_Data=scData_label[4:15]
+ PBMC_sce_combine=scMerge::sce_cbind(PBMC_Data,colData_names =T,batch_names =scdata_Samples_ID2$Sample_ID2[4:15] )
+ set.seed(12345)
+ PBMC_sce_combine2<-  scater::runPCA(PBMC_sce_combine, name="PCA2",ncomponents=50)
+ set.seed(12345)
+ PBMC_sce_combine2 <-  scater::runTSNE(PBMC_sce_combine2, perplexity=20, 
+    dimred="PCA2", n_dimred=10)
+ PBMC_sce_combine2$batch=factor(PBMC_sce_combine2$batch,levels = unique(PBMC_sce_combine2$batch))
+
+
+ save(PBMC_sce_combine2,scdata_Samples_ID2,file=file.path(Rawdata_path,"PBMC_subtype_update.rdata"))
+} else{
+  
+  load(file.path(Rawdata_path,"PBMC_subtype_update.rdata"))
+}
+
+```
+
+
+```{r,eval=T}
+PBMC_Samples_ID3= scdata_Samples_ID2%>%mutate(Group2=ifelse(Sample_ID2%in%c("Gout_PMBC_3","Gout_PBMC_5","Gout_PBMC_7"),"Gout_PBMC_type1",ifelse(grepl("Gout_PBMC",Sample_ID2),"Gout_PBMC_type2",Group   ) ))%>%dplyr::filter(grepl("PBMC",Group))
+                                                              
+PBMC_Samples_ID3$Group2=factor(PBMC_Samples_ID3$Group2,levels=c("Control_PBMC","Gout_PBMC_type1","Gout_PBMC_type2"))
+Main_celltype=c("B_cell","CD4+_T_cell","CD8+_T_cell","T_cell","NK_cell","Monocyte","Neutrophils","Macrophage","DC" ,"Platelets")
+All_celltype_color=c(RColorBrewer::brewer.pal(n = 9, name = "Set1") ,RColorBrewer::brewer.pal(n = 2, name = "Set2"))
+names(All_celltype_color)=c(Main_celltype,"Other") 
+
+Coldata=colData(PBMC_sce_combine2)
+```
+
+```{r,eval=T}
+head(reducedDim(PBMC_sce_combine2 , "TSNE"))
+newcolor=All_celltype_color[unique(PBMC_sce_combine2$labels)]
+
+```
+
+# TSNE PLOT 
+
+```{r,fig.height=16,fig.width=12,warning=F,eval=T}
+Control_sce=PBMC_sce_combine2%>%subset(.,,grepl("Control",batch))
+Gout_type1=PBMC_sce_combine2%>%subset(.,,batch%in%c("Gout_PBMC_3","Gout_PBMC_7"))
+Gout_type2=PBMC_sce_combine2%>%subset(.,,batch%in%c("Gout_PBMC_1","Gout_PBMC_2","Gout_PBMC_4","Gout_PBMC_5","Gout_PBMC_6"))
+```
+ 
+
+```{r,fig.height=8,fig.width=12,warning=F,include=F}
+P1=scater::plotTSNE(Control_sce, colour_by="labels")+scale_color_manual(values =All_celltype_color )+facet_wrap(colData(Control_sce)$batch,nrow=1)+theme(panel.spacing = unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 1), 
+        strip.background = element_rect(color = "black", size = 1))
+
+P2=scater::plotTSNE(Gout_type1, colour_by="labels")+scale_color_manual(values =All_celltype_color )+facet_wrap(colData(Gout_type1)$batch,nrow=1)+theme(panel.spacing = unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 1), 
+        strip.background = element_rect(color = "black", size = 1))
+
+P3=scater::plotTSNE(Gout_type2, colour_by="labels")+scale_color_manual(values =All_celltype_color )+facet_wrap(colData(Gout_type2)$batch,nrow=1)+theme(panel.spacing = unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 1), 
+        strip.background = element_rect(color = "black", size = 1))
+  
+```
+
+
+
+ 
+```{r,fig.height=16,fig.width=12,warning=F,include=T}
+cowplot::plot_grid(plotlist=list(P1,P2,P3),nrow=3,scale=c(1,0.5,0.8))
+```
+
+
+
+```{r,fig.width=12,fig.height=10}
+Plotlist=list()
+Datalist=list(Control_sce,Gout_type1,Gout_type2 )
+Names=c("Control","Gout_PBMC_type1","Gout_PBMC_type2")
+for ( i in 1:3 ) {
+ name=Names[i]
+ Data=Datalist[[i]]
+ Cell_type_sum=data.frame(Celltype=Data$labels,Sample=colData(Data)$batch) 
+ Cell_type_sum2=Cell_type_sum%>% group_by(Sample,Celltype)%>%summarise(n=n())
+ Cell_type_sum_n2= Cell_type_sum2%>%group_by(Sample)%>%summarise(total=sum(n))
+ Cell_type_sum3=Cell_type_sum2%>%left_join(.,Cell_type_sum_n2)%>%mutate(Per=scales::percent( n/total))
+ Plotlist[[name]]=ggplot(Cell_type_sum2, aes(x="",y=n, fill=Celltype))+
+  geom_bar(width = 1,stat = "identity",position="fill")+scale_color_manual(values =newcolor )+
+  coord_polar("y",start=0)+facet_wrap(~Sample,nrow=1)
+
+}
+
+```
+
+# main Cell types in each samples (The lack of low-density neutrophils in the blood may have resulted from the experimental procedure used for mononuclear cell selection)
+
+```{r,fig.width=15,fig.height=12,include=T}
+cowplot::plot_grid(plotlist = Plotlist,ncol = 1)
+```
+
+```{r}
+Data=PBMC_sce_combine2
+Cell_type_sum=data.frame(Celltype=Data$labels,Sample=colData(Data)$batch) %>%mutate(Maintype=ifelse(Celltype%in%c("B_cell","T_cell","CD4+_T_cell","CD8+_T_cell","NK_cell"),"Lymphocyte",ifelse(Celltype%in%c("Monocyte","Neurophils","DC"),"Myeloid" ,"Other")))
+
+Cell_type_sum2=Cell_type_sum%>% group_by(Sample,Maintype)%>%summarise(n=n())
+Cell_type_sum_n2= Cell_type_sum2%>%group_by(Sample)%>%summarise(total=sum(n))
+Cell_type_sum3=Cell_type_sum2%>%left_join(.,Cell_type_sum_n2)%>%mutate(Per=scales::percent( n/total),proportion=n/total)%>%mutate(Group2=ifelse(Sample%in%c("Gout_PMBC_3","Gout_PBMC_5","Gout_PBMC_7"),"Gout_PBMC_type1",ifelse(grepl("Gout_PBMC",Sample),"Gout_PBMC_type2","Control_PBMC"  ) ))%>%mutate(Group=ifelse(grepl("Control",Sample),"Control_PBMC","Gout_PBMC"))
+
+```
+
+
+# Lymphocyte and Myeloid
+```{r,fig.width=10,fig.height=12,include=T}
+library(ggrepel)
+Cell_type_sum3_select=Cell_type_sum3%>%dplyr::filter(Maintype!="Other")
+
+P1=ggplot(Cell_type_sum3_select,aes(x=Group,y=proportion,fill=Group))+geom_boxplot()+geom_point() + ggpubr:: stat_compare_means()+ facet_wrap(~Maintype,ncol=2)
+
+P2=ggplot(Cell_type_sum3_select,aes(x=Group2,y=proportion,fill=Group))+geom_boxplot()+geom_point() + ggpubr:: stat_compare_means()+ facet_wrap(~Maintype,ncol=2)
+
+cowplot::plot_grid(P1,P2,nrow=2)
+
+```
+
+# Subtypes
+
+```{r}
+# Statistic analysis
+Data=PBMC_sce_combine2
+Cell_type_sum=data.frame(Celltype=Data$labels,Sample=colData(Data)$batch) 
+
+Cell_type_sum2=Cell_type_sum%>% group_by(Sample,Celltype)%>%summarise(n=n())
+Cell_type_sum_n2= Cell_type_sum2%>%group_by(Sample)%>%summarise(total=sum(n))
+Cell_type_sum3=Cell_type_sum2%>%left_join(.,Cell_type_sum_n2)%>%mutate(Per=scales::percent( n/total),proportion=n/total)%>%mutate(Group2=ifelse(Sample%in%c("Gout_PMBC_3","Gout_PBMC_5","Gout_PBMC_7"),"Gout_PBMC_type1",ifelse(grepl("Gout_PBMC",Sample),"Gout_PBMC_type2","Control_PBMC"  ) ))%>%mutate(Group=ifelse(grepl("Control",Sample),"Control_PBMC","Gout_PBMC"))
+Cell_type_sum3%>%dplyr::filter(Celltype=="Monocyte")
+```
+
+
+```{r,fig.width=12,fig.height=16,include=T}
+library(ggrepel)
+ggplot(Cell_type_sum3,aes(x=Group,y=proportion,fill=Group))+geom_boxplot()+geom_point() + ggpubr:: stat_compare_means()+ facet_wrap(~Celltype,nrow=3)
+
+
+
+```
+
+```{r,fig.width=12,fig.height=16}
+library(ggrepel)
+ggplot(Cell_type_sum3,aes(x=Group2,y=proportion,fill=Group))+geom_boxplot()+geom_point() + ggpubr:: stat_compare_means()+ facet_wrap(~Celltype,nrow=3)
+
+
+
+```
+
+```{r}
+knitr::knit_exit()
+```
+

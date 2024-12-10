@@ -1,0 +1,321 @@
+---
+title: "Classical Monocyte in PBMC"
+author: "`r config::get(file = 'Config.yml')$document$author`"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    keep_tex: true
+    latex_engine: pdflatex
+    fig_caption: yes
+    highlight: haddock
+    number_sections: yes
+knit: (
+  function(inputFile, encoding) {
+    Config=config::get(file = 'Config.yml') 
+    
+    pSubTitle <- paste0("Classical Monocyte in PBMC",".pdf")
+    
+    base_output_dir <- Config$base_output_dir
+ 
+    rmarkdown::render( 
+      input       = inputFile, 
+      encoding    = encoding, 
+      output_file = pSubTitle,
+      output_dir = base_output_dir )}
+    )
+
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F,include=T,warning=F)
+```
+
+```{r,include=F}
+rm(list=ls())
+#install.packages('Seurat')
+library(dplyr)
+library(ggplot2)
+library(scran)
+library(scuttle)
+library(bluster)
+library(SingleR)
+#library("Seurat")
+
+```
+
+```{r,include=T}
+Config=config::get(file = 'Config.yml')
+Path=Config$Path
+Rawdata_path=file.path(Path, "R/Rawdata")
+Rcode_path=file.path(Path, "R/Rcode")
+```
+
+
+```{r,include=T}
+SRA_sample=read.csv(file.path(Rawdata_path,"SraRunInfo.csv" ))
+SRA_sample_anno=SRA_sample[,c("LibraryName","Run")]%>%mutate(Group=c(rep("Gout_SYN",3),rep("Gout_PBMC",7),rep("Control_PBMC",5)))%>%setNames(c("Sample_ID","SRR_number","Group"))
+scdata_Samples_ID2=SRA_sample[,c("LibraryName","Run")]%>%mutate(Group=c(rep("Gout_SYN",3),rep("Gout_PBMC",7),rep("Control_PBMC",5)))%>%setNames(c("Sample_ID","SRR_number","Group"))%>%mutate(Sample_ID2=c(paste0("Gout_SYN_",c(1:3)),paste0("Gout_PBMC_",c(1:7)),paste0("Control_PBMC_",c(1:5)) ))
+```
+
+
+```{r,include=T}
+knitr::kable(scdata_Samples_ID2,caption = "Sample information")
+ 
+```
+
+```{r}
+Main_celltype=c("B_cell","CD4+_T_cell","CD8+_T_cell","T_cell","NK_cell","Monocyte","Neutrophils","Macrophage","DC" ,"Platelets")
+All_celltype_color=c(RColorBrewer::brewer.pal(n = 9, name = "Set1") ,RColorBrewer::brewer.pal(n = 2, name = "Set2"))
+names(All_celltype_color)=c(Main_celltype,"Other") 
+```
+
+
+```{r}
+load(file.path(Rawdata_path,"Monocyte_maintype.rdata")) #PBMC_Monocyte_sce3, 
+```
+
+
+## Monocyte in PMBC
+```{r}
+set.seed(1234)
+Classical_mono_sce=subset(PBMC_Monocyte_sce3,,Mono_subtype=="Classical monocytes")
+ 
+```
+
+
+```{r,fig.width=12,fig.height=6}
+set.seed(123456)
+Classical_mono_sce2<- scater::runPCA(Classical_mono_sce, name="PCA3",ncomponents=30 )
+set.seed(123456)
+Classical_mono_sce3=scater::runUMAP(Classical_mono_sce2,name="UMAP", dimred="PCA3",  n_neighbors = 5)
+```
+
+
+
+```{r,fig.width=12,fig.height=12,include=T}
+scater::plotUMAP (Classical_mono_sce3,colour_by="Mono_subtype" )+facet_wrap(Classical_mono_sce3$batch)
+```
+
+```{r}
+set.seed(123456)
+ clust.kmeans <- clusterCells(Classical_mono_sce3, use.dimred="UMAP", 
+    BLUSPARAM=KmeansParam(centers=10))
+colLabels(Classical_mono_sce3) <- clust.kmeans
+Classical_mono_sce3$Kmeans=as.character(clust.kmeans)
+
+
+```
+
+```{r,fig.width=6,fig.height=8}
+scater::plotUMAP (Classical_mono_sce3,colour_by="Kmeans",text_by="Kmeans" )
+```
+
+
+```{r,fig.width=12,fig.height=14,include=T}
+scater::plotUMAP (Classical_mono_sce3,colour_by="Kmeans" )+facet_wrap(Classical_mono_sce3$batch)
+```
+
+```{r,fig.height=16,fig.width=12,warning=F,eval=T}
+Control_sce=Classical_mono_sce3%>%subset(.,,grepl("Control",batch))
+Gout_type1=Classical_mono_sce3%>%subset(.,,batch%in%c("Gout_PBMC_3","Gout_PBMC_7"))
+Gout_type2=Classical_mono_sce3%>%subset(.,,batch%in%c("Gout_PBMC_1","Gout_PBMC_2","Gout_PBMC_4","Gout_PBMC_5","Gout_PBMC_6"))
+
+Group_set=rbind(data.frame(Sample=unique(Control_sce$batch),Group="Control" ),data.frame(Sample=unique(Gout_type1$batch),Group="Gout_type1" ),data.frame(Sample=unique(Gout_type2$batch),Group="Gout_type2" ))
+```
+
+
+```{r}
+# Classical_kmeans2=data.frame(Cluster=Classical_mono_sce3$Kmeans,Sample=Classical_mono_sce3$batch) %>%mutate(Cluster=ifelse(Cluster%in%c("2","6","7"),"Classical_Mono_type1",ifelse(Cluster%in%c("1","8","10"),"Classical_Mono_type2",ifelse(Cluster%in%c("4","5","9","12"),"Classical_Mono_type3",ifelse(Cluster%in%c("3"),"Classical_Mono_type4","Classical_Mono_type5" ) ))))
+
+Classical_kmeans2=data.frame(Cluster=Classical_mono_sce3$Kmeans,Sample=Classical_mono_sce3$batch) %>%mutate(Cluster=ifelse(Cluster%in%c("1","5","7","9"),"Classical_Mono_type1",ifelse(Cluster%in%c("6","8","10"),"Classical_Mono_type2",ifelse(Cluster%in%c("2"),"Classical_Mono_type3",ifelse(Cluster%in%c("3"),"Classical_Mono_type4","Classical_Mono_type5" ) ))))
+
+Classical_kmeans_data2=Classical_kmeans2%>% group_by(Sample,Cluster)%>%summarise(n=n())
+Classical_kmeans_data_n2= Classical_kmeans_data2%>%group_by(Sample)%>%summarise(total=sum(n))
+Classical_kmeans_data3=Classical_kmeans_data2%>%left_join(.,Classical_kmeans_data_n2)%>%mutate(Per=scales::percent( n/total),Proportion=n/total)%>%left_join(.,Group_set)
+```
+
+```{r}
+Classical_mono_sce3$Mono_subtype2=Classical_kmeans2$Cluster
+markers <- scoreMarkers(Classical_mono_sce3,Classical_mono_sce3$Mono_subtype2)
+marker_list=list()
+
+for (i in 1:length(markers)) {
+  Type_marker=markers[[i]]%>%as.data.frame() %>%arrange(desc( mean.AUC))
+  Type_marker_sig_UP=Type_marker%>%as.data.frame()%>%dplyr::filter(median.logFC.cohen< as.numeric(-0.3))%>%dplyr::filter(mean.AUC>0.6)
+
+  Type_marker_sig_DN=Type_marker%>%as.data.frame()%>%dplyr::filter(median.logFC.cohen>0.6 )%>%dplyr::filter(mean.AUC>0.6)
+ 
+  marker_list[[i]]=rbind(Type_marker_sig_UP,Type_marker_sig_DN)
+  
+}
+
+out=marker_list[[5]]
+
+```
+
+
+```{r}
+Marker_plot=list()
+for (i in 1:length(marker_list)) {
+  markers=marker_list[[i]]%>%rownames(.)%>%.[1:10]%>%na.omit()
+  Marker_plot[[i]]=scater::plotExpression(Classical_mono_sce3, markers,x = "Mono_subtype2",colour_by = "Mono_subtype2")+theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+  
+}
+```
+
+```{r}
+marker_list[[1]]
+```
+
+
+# Type1:   ,TYpe2  ,mhc II _hi ,Type3:mhc II _hi ,NFKB1A high; Type4: FOLR3_Hi,FKBP5,USP15,ZBTB16,DPYD Type5; FOLR3_Hi,HLA-B_Hi
+
+```{r,fig.width=12,fig.height=16,include=F}
+
+markers=c("HLA-DPB1","HLA-DRA","HLA-DPA1","HLA-DQB1","CD74","FOS","VCAN" ,"NFKBIA","CYP1B1" ,"FOLR3","FKBP5","USP15","ZBTB16","HLA-B","HLA-A","RETN")
+
+scater::plotExpression(Classical_mono_sce3, markers,x = "Mono_subtype2",colour_by = "Mono_subtype2",ncol=5)+theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+\newpage
+
+```{r,fig.width=12,fig.height=14,include=F}
+markers=rownames(Classical_mono_sce3)%>%.[grepl("^IL\\d",.)]%>%.[!grepl("R",.)]
+
+scater::plotExpression(Classical_mono_sce3, markers,x = "Mono_subtype2",colour_by = "Mono_subtype2",ncol=5)+theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+```{r,fig.width=12,fig.height=18,include=F}
+
+#Marker_plot_Select[[2]]
+
+```
+
+
+
+
+```{r,fig.width=12,fig.height=18}
+
+#%>%.[grepl("HLA",.)]
+fig_list=list()
+for (i in markers){
+  
+  fig_list[[i]]=scater::plotUMAP (Classical_mono_sce3, colour_by=i)+ ggtitle(label = i) + theme(plot.title = element_text(size = 20))
+  
+}
+
+cowplot::plot_grid( plotlist=fig_list,ncol=5)
+```
+ 
+
+
+
+```{r,fig.width=12,fig.height=14,include=T}
+new_name=data.frame(old=sort(unique(Classical_mono_sce3$Mono_subtype2)))%>%mutate(new=c("MHC_low","MHC_Hi_NFKBIA_low","MHC_Hi_NFKBIA_Hi","MHC_low_ZBTB16_Hi","MHC_low_RTEN_Hi"))%>%mutate(new=factor(new,levels=c("MHC_Hi_NFKBIA_low","MHC_Hi_NFKBIA_Hi","MHC_low","MHC_low_ZBTB16_Hi","MHC_low_RTEN_Hi")))
+new_name2=data.frame(old=Classical_mono_sce3$Mono_subtype2)%>%left_join(.,new_name)
+
+Classical_mono_sce3$Mono_subtype2=new_name2$new
+
+scater::plotUMAP (Classical_mono_sce3,colour_by="Mono_subtype2" )+facet_wrap(Classical_mono_sce3$batch)
+```
+
+
+
+```{r,fig.width=12,fig.height=16,include=T}
+
+markers=c("HLA-DPB1","HLA-DRA","HLA-DPA1","HLA-DQB1","CD74","FOS","VCAN" ,"NFKBIA","CYP1B1" ,"FOLR3","FKBP5","USP15","ZBTB16","HLA-B","HLA-A","RETN")
+
+scater::plotExpression(Classical_mono_sce3, markers,x = "Mono_subtype2",colour_by = "Mono_subtype2",ncol=5)+theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r,fig.height=16,fig.width=12,warning=F,eval=T}
+Control_sce=Classical_mono_sce3%>%subset(.,,grepl("Control",batch))
+# Gout_type1=Classical_mono_sce3%>%subset(.,,batch%in%c("Gout_PBMC_3","Gout_PBMC_7"))
+# Gout_type2=Classical_mono_sce3%>%subset(.,,batch%in%c("Gout_PBMC_1","Gout_PBMC_2","Gout_PBMC_4","Gout_PBMC_5","Gout_PBMC_6"))
+
+
+Gout_type1=Classical_mono_sce3%>%subset(.,,batch%in%c("Gout_PBMC_1","Gout_PBMC_5","Gout_PBMC_7"))
+Gout_type2=Classical_mono_sce3%>%subset(.,,batch%in%c("Gout_PBMC_2","Gout_PBMC_3","Gout_PBMC_4","Gout_PBMC_6"))
+
+
+Group_set=rbind(data.frame(Sample=unique(Control_sce$batch),Group="Control" ),data.frame(Sample=unique(Gout_type1$batch),Group="Gout_type1" ),data.frame(Sample=unique(Gout_type2$batch),Group="Gout_type2" ))
+```
+
+
+```{r}
+celltype_color=RColorBrewer::brewer.pal(name="Accent",n=8)
+names(celltype_color)=unique(Classical_mono_sce3$Mono_subtype2)
+```
+
+
+```{r,fig.height=8,fig.width=12,warning=F,include=F}
+
+P1=scater::plotUMAP(Control_sce, colour_by="Mono_subtype2")+scale_color_manual(values =celltype_color )+facet_wrap(colData(Control_sce)$batch,nrow=1)+theme(panel.spacing = unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 1), 
+        strip.background = element_rect(color = "black", size = 1))
+
+P2= scater::plotUMAP(Gout_type1, colour_by="Mono_subtype2")+scale_color_manual(values =celltype_color )+facet_wrap(colData(Gout_type1)$batch,nrow=1)+theme(panel.spacing = unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 1), 
+        strip.background = element_rect(color = "black", size = 1))
+P2_2=gridExtra::grid.arrange(grobs=list(P2,grid::nullGrob()),nrow=1, widths = 2:1)
+
+
+P3=scater::plotUMAP(Gout_type2, colour_by="Mono_subtype2")+scale_color_manual(values =celltype_color )+facet_wrap(colData(Gout_type2)$batch,nrow=1)+theme(panel.spacing = unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 1), 
+        strip.background = element_rect(color = "black", size = 1))
+  
+```
+
+
+ 
+```{r,fig.height=16,fig.width=12,warning=F,include=T}
+cowplot::plot_grid(plotlist=list(P1,P2_2,P3),nrow=3)
+```
+
+
+
+
+
+
+```{r}
+Classical_kmeans2=data.frame(Cluster=Classical_mono_sce3$Mono_subtype2,Sample=Classical_mono_sce3$batch) 
+Classical_kmeans_data2=Classical_kmeans2%>% group_by(Sample,Cluster)%>%summarise(n=n())
+Classical_kmeans_data_n2= Classical_kmeans_data2%>%group_by(Sample)%>%summarise(total=sum(n))
+Classical_kmeans_data3=Classical_kmeans_data2%>%left_join(.,Classical_kmeans_data_n2)%>%mutate(Per=scales::percent( n/total),Proportion=n/total)%>%left_join(.,Group_set)%>%dplyr::filter(Group!="Gout_type1")
+
+
+```
+
+
+```{r}
+
+
+library(ggrepel)
+library(ggpubr)
+Plotlist=list()
+# Names=c("Control","Gout_PBMC_type1","Gout_PBMC_type2")
+plist=list()
+for ( i in unique(Classical_kmeans_data3$Cluster)) {
+   data=Classical_kmeans_data3%>%dplyr::filter(Cluster==i)
+   Plotlist[[i]]=ggplot(data,aes(x=Group,y=Proportion,fill=Group))+stat_compare_means(method = "t.test") +geom_boxplot()+geom_point()+ggtitle(i)
+   
+}
+```
+
+```{r,fig.width=12,fig.height=8,include=T}
+cowplot::plot_grid(plotlist=Plotlist,nrow=2)
+
+```
+
+
+```{r}
+save(Classical_mono_sce3,file=file.path(Rawdata_path,"Classical_mono_subtype.rdata"))
+```
+
+ 
+```{r}
+knitr::knit_exit()
+```
+
+
