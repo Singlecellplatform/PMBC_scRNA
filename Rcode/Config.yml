@@ -1,0 +1,6 @@
+default:
+  document:
+    author: "Yang"
+  Path: "/media/yang/Data/Project/Gout_scRNA"
+  base_output_dir: "/media/yang/Data/Project/Gout_scRNA/R/Report"
+  yml: 
