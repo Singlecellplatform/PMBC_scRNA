@@ -1,0 +1,1199 @@
+---
+title: "SF immune"
+author: "`r config::get(file = 'Config.yml')$document$author`"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    keep_tex: true
+    latex_engine: pdflatex
+    fig_caption: yes
+    highlight: haddock
+    number_sections: yes
+knit: (
+  function(inputFile, encoding) {
+    Config=config::get(file = 'Config.yml') 
+    
+    pSubTitle <- paste0("SF immune",".pdf")
+    
+    base_output_dir <- Config$base_output_dir
+ 
+    rmarkdown::render( 
+      input       = inputFile, 
+      encoding    = encoding, 
+      output_file = pSubTitle,
+      output_dir = base_output_dir )}
+    )
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F,include=F,warning=F)
+```
+
+
+
+```{r,include=F}
+rm(list=ls())
+#install.packages('Seurat')
+#BiocManager::install("scran")
+# BiocManager::install("S4Vectors")
+# BiocManager::install("cytolib")
+# BiocManager::install("scuttle")
+#BiocManager::install("scMerge")
+
+
+# install.packages('ggrastr')
+#BiocManager::install("scater")
+#remotes::install_version("Matrix", version = "1.6-1")
+library("scater")
+#BiocManager::install("SingleR")
+library(dplyr)
+library(ggplot2)
+library(scran)
+library(scuttle)
+library(bluster)
+library(SingleR)
+#library("Seurat")
+
+```
+
+
+```{r,include=T}
+Config=config::get(file = 'Config.yml')
+Path=Config$Path
+Rawdata_path=file.path(Path, "R/Rawdata")
+Rcode_path=file.path(Path, "R/Rcode")
+```
+
+
+
+```{r,include=F}
+# Sample annotation
+SRA_sample=read.csv(file.path(Rawdata_path,"SraRunInfo.csv" ))
+SRA_sample_anno=SRA_sample[,c("LibraryName","Run")]%>%mutate(Group=c(rep("Gout_SYN",3),rep("Gout_PBMC",7),rep("Control_PBMC",5)))%>%setNames(c("Sample_ID","SRR_number","Group"))
+scdata_Samples_ID2=SRA_sample[,c("LibraryName","Run")]%>%mutate(Group=c(rep("Gout_SYN",3),rep("Gout_PBMC",7),rep("Control_PBMC",5)))%>%setNames(c("Sample_ID","SRR_number","Group"))%>%mutate(Sample_ID2=c(paste0("Gout_SYN_",c(1:3)),paste0("Gout_PBMC_",c(1:7)),paste0("Control_PBMC_",c(1:5)) ))
+```
+
+
+```{r,include=T}
+knitr::kable(scdata_Samples_ID2,caption = "Sample information")
+```
+
+# Set up Gout subgroup by drinking habit (# Te clinical conditions of seven patients with acute gout are shown in Table S1. Among these patients, only Case 07 was a new case, with the frst attack lasting for 19 days; all others had a disease history of 1 to>20 years, with attacks lasting 1–14 days. Cases 03 and 07 were heavy drinkers, and Case 05 drink occasionally; the other subjects did not drink.
+
+
+```{r,eval=T}
+# Merge scData
+       
+if (! file.exists(file.path(Rawdata_path,"Three_synoval_immune.rdata"))){
+ load(file.path(Rawdata_path,"Clean_scRNA_and_metadata.rdata"))
+ SF_data_sce=scData_label[1:3]
+ sce_combine=scMerge::sce_cbind(SF_data_sce,colData_names =T,batch_names =scdata_Samples_ID2$Sample_ID2[1:3] )
+ #sce_combine$labels
+ set.seed(1234)
+ sce_combine2<-  scater::runPCA(sce_combine, name="PCA2",ncomponents=50)
+ sce_combine2 <-  scater::runTSNE(sce_combine2, perplexity=20, 
+    dimred="PCA2", n_dimred=10)
+ sce_combine2$batch=factor(sce_combine2$batch,levels = c("Gout_SYN_1","Gout_SYN_2","Gout_SYN_3"))
+ clust.kmeans <- scran::clusterCells(sce_combine2, use.dimred="PCA2", BLUSPARAM= bluster::KmeansParam(centers=5))
+ sce_combine2$Kmeans=clust.kmeans
+unique(sce_combine2$labels)
+table(sce_combine2$labels)
+ sce_combine2= scater::runUMAP (sce_combine2, name="UMAP", dimred="PCA2",  n_neighbors = 10)
+P1=scater::plotUMAP(sce_combine2, colour_by="Kmeans",,text_by="Kmeans") 
+P2=scater::plotUMAP(sce_combine2, colour_by="labels",,text_by="labels")
+
+Classical_kmeans=data.frame(Cluster=sce_combine2$Kmeans,Subtype=sce_combine2$labels)%>%mutate(Subtype=gsub("Monocyte","Macrophage",Subtype))%>%mutate(Subtype=ifelse(Subtype=="Macrophage"&Cluster%in%c(4,5),"M1_macro", ifelse(Subtype=="Macrophage","M2_macro",Subtype )))
+table(Classical_kmeans$Subtype)
+sce_combine2$Subtype=Classical_kmeans$Subtype
+SF_data_sce=sce_combine2
+save(SF_data_sce,file=file.path(Rawdata_path,"Three_synoval_immune.rdata"))
+} else{
+  
+  load(file.path(Rawdata_path,"Three_synoval_immune.rdata"))
+}
+# Myeloid data from SF 
+```
+
+# Main subtypes (SingleR and  singleR+kmeans)
+```{r,fig.height=18,fig.width=12,include=T}
+P1=scater::plotUMAP(SF_data_sce, colour_by="labels",,text_by="labels") 
+P2=scater::plotUMAP(SF_data_sce, colour_by="Subtype",,text_by="Subtype")
+ 
+cowplot::plot_grid(P1,P2,ncol=2) 
+ 
+```
+
+
+```{r,eval=T}
+#load(file.path(Rawdata_path,"Three_synoval_immune.rdata")) # immune cells in synovial 
+
+Main_celltype=c("B_cell","CD4+_T_cell","CD8+_T_cell","NK_cell","Monocyte","Neutrophils","Macrophage","DC" ,"Platelets", "M1_macro","M2_macro")
+All_celltype_color=c(RColorBrewer::brewer.pal(n = 9, name = "Set1") ,RColorBrewer::brewer.pal(n = 4, name = "Set2"))
+names(All_celltype_color)=c(Main_celltype,"Other")
+```
+
+
+
+# M2 markers ,"CD68","MRC1/CD206","cd163; M1 marker: CD68+;State markers: CD14, CD86,"ITGAM","CD14","FCGR3A" ,,"CD86"
+
+```{r,fig.height=8,fig.width=12,include=T}
+# M1 and M2 marker https://www.origene.com/research-areas/m1-and-m2-macrophage-markers
+# CD16a:FCGR3A;cd11c:ITGAX,CD20:MS4A1;CD19:MANE.CD11B:ITGAM,CD206: MRC1
+# Flt3+ macrophage precursors
+# Neutrophils: IFITM2, IFITM1, H3F3B, SAT1, and S100A8 
+# CD16b"FCGR3B" missing in the data
+markers=c("CD68","MRC1","CD163","ITGAM","CD14","FCGR3A" ,"CD86","FLT3")
+
+Fig_list=list()
+for (i in markers){
+  Fig_list[[i]]=scater::plotUMAP (SF_data_sce, colour_by=i)+ ggtitle(label = i) + theme(plot.title = element_text(size = 20))
+  
+}
+
+rownames(SF_data_sce)%>%.[grepl("FCGR",.)]
+
+cowplot::plot_grid( plotlist=Fig_list,ncol=4)
+```
+
+# T cells  markers (MostT cells are NKT cells)
+```{r,fig.height=18,fig.width=12,include=T}
+# M1 and M2 marker https://www.origene.com/research-areas/m1-and-m2-macrophage-markers
+# CD16a:FCGR3A;cd11c:ITGAX,CD20:MS4A1;CD19:MANE.CD11B:ITGAM,CD206: MRC1
+# Flt3+ macrophage precursors
+# Neutrophils: IFITM2, IFITM1, H3F3B, SAT1, and S100A8 
+# CD16b"FCGR3B" missing in the data
+markers=c("CD3E" , "CD3D","CD3G" ,"CD4","CD8A","CD8B","GZMB","GNLY","NKG7","ITGAM","CD14","FCGR3A" ,"CD68","MRC1","CD86","IL1R2","IL1R1","HLA-DQB1","HLA-DQA1" , "FLT3" ,"ITGAX","CXCL2","IFITM2", "IFITM1", "H3F3B")
+
+markers=c("CD3E" , "CD3D","CD3G" ,"CD4","CD8A","CD8B","GZMB","GNLY","NKG7")
+Fig_list=list()
+for (i in markers){
+  Fig_list[[i]]=scater::plotUMAP (SF_data_sce, colour_by=i)+ ggtitle(label = i) + theme(plot.title = element_text(size = 20))
+  
+}
+
+rownames(SF_data_sce)%>%.[grepl("FCGR",.)]
+
+cowplot::plot_grid( plotlist=Fig_list,ncol=4)
+```
+
+```{r,include=T}
+newcolor=All_celltype_color[unique(SF_data_sce$Subtype)]
+
+scater::plotUMAP(SF_data_sce, colour_by="Subtype")+facet_wrap(SF_data_sce$batch)+theme(panel.spacing = unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 1), 
+        strip.background = element_rect(color = "black", size = 1))
+
+```
+
+```{r,fig.width=12,fig.height=4,include=T}
+Classical_kmeans2=data.frame(Cluster=SF_data_sce$Subtype,Sample=SF_data_sce$batch) 
+Classical_kmeans_data2=Classical_kmeans2%>% group_by(Sample,Cluster)%>%summarise(n=n())
+Classical_kmeans_data_n2= Classical_kmeans_data2%>%group_by(Sample)%>%summarise(total=sum(n))
+Classical_kmeans_data3=Classical_kmeans_data2%>%left_join(.,Classical_kmeans_data_n2)%>%mutate(Per=scales::percent( n/total))
+
+
+ggplot(Classical_kmeans_data3, aes(x="",y=n, fill=Cluster))+
+  geom_bar(width = 1,stat = "identity",position="fill")+
+  coord_polar("y",start=0)+facet_wrap(Classical_kmeans_data3$Sample)
+
+```
+
+# M2 showed high expression of IL1B
+```{r,fig.height=12,fig.width=12,include=T}
+markers=rownames(SF_data_sce)%>%.[grepl("^IL",.)]%>%.[!grepl("R|P|BL|DT|K|ST",.)]
+Fig_list=list()
+for (i in markers){
+  Fig_list[[i]]=scater::plotUMAP (SF_data_sce, colour_by=i)+ ggtitle(label = i) + theme(plot.title = element_text(size = 20))
+  
+}
+
+
+cowplot::plot_grid( plotlist=Fig_list,ncol=4)
+```
+
+
+# Chemokines
+```{r,fig.height=12,fig.width=12,include=T}
+markers=rownames(SF_data_sce)%>%.[grepl("^CXC",.)]
+
+Fig_list=list()
+for (i in markers){
+  Fig_list[[i]]=scater::plotUMAP (SF_data_sce, colour_by=i)+ ggtitle(label = i) + theme(plot.title = element_text(size = 20))
+  
+}
+
+
+cowplot::plot_grid( plotlist=Fig_list,ncol=4)
+```
+
+# CSF
+```{r,fig.height=12,fig.width=12,include=T}
+markers=rownames(SF_data_sce)%>%.[grepl("^CSF",.)]
+
+Fig_list=list()
+for (i in markers){
+  Fig_list[[i]]=scater::plotUMAP (SF_data_sce, colour_by=i)+ ggtitle(label = i) + theme(plot.title = element_text(size = 20))
+  
+}
+
+
+cowplot::plot_grid( plotlist=Fig_list,ncol=4)
+```
+\newpage
+
+# NFKB,RELA(NFKB3)
+```{r,fig.height=12,fig.width=12,include=T}
+markers=rownames(SF_data_sce)%>%.[grepl("NFKB|RELA",.)]
+
+Fig_list=list()
+for (i in markers){
+  Fig_list[[i]]=scater::plotUMAP (SF_data_sce, colour_by=i)+ ggtitle(label = i) + theme(plot.title = element_text(size = 20))
+  
+}
+
+
+cowplot::plot_grid( plotlist=Fig_list,ncol=4)
+```
+
+```{r}
+Gene_expression_celltype=function(SCE,genename) {
+  library("SingleCellExperiment")
+  p1 <- colData(SCE) %>%as.data.frame()%>%
+  mutate(expression =logcounts(SCE) [genename,]) %>%
+  ggplot(aes(x = Subtype, y = expression, fill = Subtype)) +
+  geom_violin(draw_quantiles = c(0.5), scale = 'width', trim = TRUE) +
+  theme_bw() +
+  #scale_fill_manual(values = custom_colors$discrete) +
+  scale_x_discrete() +
+  scale_y_continuous(name = 'Log-normalized expression', labels = scales::comma) +
+  labs(title =paste0(genename  ,"_expression")) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    legend.position = 'none'
+  )
+  
+}
+
+
+```
+
+\newpage
+```{r,fig.height=4,fig.width=12,include=T}
+Gene_list=c("IL1B", "NFKB1","CD68", "CD163","HLA-DQA1","HLA-DQB1" ) 
+
+Plotlist=list()
+for (i in Gene_list) {
+  Plotlist[[i]]=Gene_expression_celltype(SF_data_sce,i) 
+
+}
+
+cowplot::plot_grid(plotlist= Plotlist,ncol=3)
+
+```
+
+# PIEZO,KCNN,NGF
+
+```{r,fig.height=12,fig.width=12,include=T}
+
+markers=rownames(SF_data_sce)%>%.[grepl("PIEZO|KCNN|NGF|TGFB",.)]
+
+Fig_list=list()
+for (i in markers){
+  Fig_list[[i]]=scater::plotUMAP (SF_data_sce, colour_by=i)+ ggtitle(label = i) + theme(plot.title = element_text(size = 20))
+  
+}
+
+
+cowplot::plot_grid( plotlist=Fig_list,ncol=4)
+
+```
+\newpage
+
+```{r,fig.height=10,fig.width=12,include=T}
+Gene_list=rownames(SF_data_sce)%>%.[grepl("PIEZO|KCNN|NGF|TGFB",.)]
+
+
+Plotlist=list()
+for (i in Gene_list) {
+  Plotlist[[i]]=Gene_expression_celltype(SF_data_sce,i) 
+
+}
+
+cowplot::plot_grid(plotlist= Plotlist,ncol=3)
+
+```
+
+
+```{r}
+knitr::knit_exit()
+```
+
+
+# Differential expressed genes between cell types
+
+```{r}
+sce=SF_data_sce
+dea <- scran::pseudoBulkDGE(sce, label =NULL, condition = sce$Subtype, design =~0+ condition, contrast = c("M1_macro", "M2_macro"))
+```
+
+
+
+```{r}
+knitr::knit_exit()
+```
+
+
+```{r}
+sce=SF_data_sce
+library(scater)
+sce_counts <-counts(sce)
+colData(sce)$pb_group =
+    paste0(colData(sce)$batch,
+           "-",
+           colData(sce)$Subtype)
+
+sce_counts <- counts(sce)
+pb_counts <- t(rowsum(t(sce_counts), colData(sce)$pb_group))
+
+pb_samples <- colnames(pb_counts)
+#pb_samples <- gsub("astrocytes_ependymal", "astrocytes-ependymal", pb_samples)
+pb_split <- do.call(rbind, strsplit(pb_samples, "-"))
+pb_sample_anno <- data.frame(
+    sample = pb_samples,
+    cell_type = pb_split[, 2],
+    sample_group = pb_split[, 1]
+)
+
+pb_dge <- edgeR:: DGEList(
+    counts = pb_counts,
+    samples = pb_sample_anno,
+    group = pb_sample_anno$cell_type
+)
+
+pb_dge <- edgeR::calcNormFactors(pb_dge)
+
+#design <- model.matrix(~sample_group + cell_type, data = pb_dge$samples)
+design <- model.matrix(~0 + cell_type, data = pb_dge$samples)
+
+colnames(design) <- make.names(gsub("cell_type", "", colnames(design)))
+colnames(design) <- make.names(gsub("sample_group", "", colnames(design)))
+
+pb_dge <-  edgeR::estimateDisp(pb_dge, design)
+```
+
+
+```{r}
+library(edgeR)
+contr <- makeContrasts("M1_macro - M2_macro", levels = design)
+
+pb_fit <- glmFit(pb_dge, design)
+pb_lrt <- glmLRT(pb_fit, contrast = contr)
+```
+
+```{r}
+#BiocManager::install("Glimma")
+Glimma::glimmaMA(pb_lrt, dge = pb_dge)
+```
+
+
+```{r}
+Gene_expression=function(sce_Data,gene_name){
+  Expression=sce_Data
+  Data=data.frame(Subtype=sce_Data$Subtype,Batch=SF_data_sce$batch) 
+
+  
+}
+```
+
+
+```{r}
+knitr::knit_exit()
+```
+
+
+```{r,include=F}
+SF_data_sce.markers =scran::scoreMarkers(SF_data_sce,groups=SF_data_sce$Subtype)
+names(SF_data_sce.markers)
+
+Type1_marker=SF_data_sce.markers[["Other"]]%>%as.data.frame()%>%dplyr::filter( mean.AUC>0.7) %>%arrange   (desc(mean.logFC.cohen))
+Type2_marker=SF_data_sce.markers[["NK_cells"]]%>%as.data.frame()%>%dplyr::filter( mean.AUC>0.7) %>%arrange   (desc(mean.logFC.cohen))
+Type3_marker=SF_data_sce.markers[["T_cells"]]%>%as.data.frame()%>%dplyr::filter( mean.AUC>0.7) %>%arrange   (desc(mean.logFC.cohen))
+
+```
+
+
+
+
+
+```{r,fig.height=18,fig.width=12}
+# M1 and M2 marker https://www.origene.com/research-areas/m1-and-m2-macrophage-markers
+# CD16a:FCGR3A;cd11c:ITGAX,CD20:MS4A1;CD19:MANE.CD11B:ITGAM,CD206: MRC1
+# Flt3+ macrophage precursors
+# Neutrophils: IFITM2, IFITM1, H3F3B, SAT1, and S100A8 
+# CD16b"FCGR3B" missing in the data
+markers=c("CD3E" , "CD3D","CD3G" ,"CD4","CD8A","CD8B","GZMB","GNLY","NKG7","ITGAM","CD14","FCGR3A" ,"CD68","MRC1","CD86","IL1R2","IL1R1","HLA-DQB1","HLA-DQA1" , "FLT3" ,"ITGAX","CXCL2","IFITM2", "IFITM1", "H3F3B")
+
+markers=c("CD3E" , "CD3D","CD3G" ,"CD4","CD8A","CD8B","GZMB","GNLY","NKG7")
+Fig_list=list()
+for (i in markers){
+  Fig_list[[i]]=scater::plotUMAP (SF_data_sce, colour_by=i)+ ggtitle(label = i) + theme(plot.title = element_text(size = 20))
+  
+}
+
+rownames(SF_data_sce)%>%.[grepl("FCGR",.)]
+
+cowplot::plot_grid( plotlist=Fig_list,ncol=4)
+```
+
+
+```{r,fig.height=8,fig.width=12}
+# M1 and M2 marker https://www.origene.com/research-areas/m1-and-m2-macrophage-markers
+# CD16a:FCGR3A;cd11c:ITGAX,CD20:MS4A1;CD19:MANE.CD11B:ITGAM,CD206: MRC1
+# Flt3+ macrophage precursors
+# Neutrophils: IFITM2, IFITM1, H3F3B, SAT1, and S100A8 
+# CD16b"FCGR3B" missing in the data
+markers=c("ITGAM","CD14","FCGR3A" ,"CD68","MRC1","CD86")
+
+Fig_list=list()
+for (i in markers){
+  Fig_list[[i]]=scater::plotUMAP (SF_data_sce, colour_by=i)+ ggtitle(label = i) + theme(plot.title = element_text(size = 20))
+  
+}
+
+rownames(SF_data_sce)%>%.[grepl("FCGR",.)]
+
+cowplot::plot_grid( plotlist=Fig_list,ncol=4)
+```
+
+```{r,fig.height=18,fig.width=12}
+markers=rownames(SF_data_sce)%>%.[grepl("^IL",.)]%>%.[!grepl("R|P|BL|DT|K|ST",.)]%>%sort()
+
+Fig_list=list()
+for (i in markers){
+  Fig_list[[i]]=scater::plotUMAP (SF_data_sce, colour_by=i)+ ggtitle(label = i) + theme(plot.title = element_text(size = 20))
+  
+}
+
+rownames(SF_data_sce)%>%.[grepl("^IL",.)]%>%.[!grepl("R|P|BL|DT|K|ST",.)]
+
+cowplot::plot_grid( plotlist=Fig_list,ncol=4)
+```
+
+```{r,fig.height=12,fig.width=12}
+markers=rownames(SF_data_sce)%>%.[grepl("^CXC",.)]
+
+Fig_list=list()
+for (i in markers){
+  Fig_list[[i]]=scater::plotUMAP (SF_data_sce, colour_by=i)+ ggtitle(label = i) + theme(plot.title = element_text(size = 20))
+  
+}
+
+rownames(SF_data_sce)%>%.[grepl("^IL",.)]%>%.[!grepl("R|P|BL|DT|K|ST",.)]
+
+cowplot::plot_grid( plotlist=Fig_list,ncol=4)
+```
+
+```{r,fig.height=12,fig.width=12}
+markers=rownames(SF_data_sce)%>%.[grepl("^CCL",.)]
+
+Fig_list=list()
+for (i in markers){
+  Fig_list[[i]]=scater::plotUMAP (SF_data_sce, colour_by=i)+ ggtitle(label = i) + theme(plot.title = element_text(size = 20))
+  
+}
+
+rownames(SF_data_sce)%>%.[grepl("^IL",.)]%>%.[!grepl("R|P|BL|DT|K|ST",.)]
+
+cowplot::plot_grid( plotlist=Fig_list,ncol=4)
+```
+
+```{r,fig.height=6,fig.width=12}
+markers=rownames(SF_data_sce)%>%.[grepl("CSF",.)]
+
+Fig_list=list()
+for (i in markers){
+  Fig_list[[i]]=scater::plotUMAP (SF_data_sce, colour_by=i)+ ggtitle(label = i) + theme(plot.title = element_text(size = 20))
+  
+}
+
+rownames(SF_data_sce)%>%.[grepl("^IL",.)]%>%.[!grepl("R|P|BL|DT|K|ST",.)]
+
+cowplot::plot_grid( plotlist=Fig_list,ncol=4)
+```
+
+```{r}
+newcolor=All_celltype_color[unique(SF_data_sce$labels)]
+
+scater::plotUMAP(SF_data_sce, colour_by="Subtype")+facet_wrap(SF_data_sce$batch)+theme(panel.spacing = unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 1), 
+        strip.background = element_rect(color = "black", size = 1))
+
+```
+
+
+
+
+```{r}
+Mye_types=c("Monocyte","Neutrophils","Macrophage","DC")
+
+SF_data_Myeloid=lapply(SF_data,function(x) x[,x$labels%in%Mye_types] )
+
+unique(SF_data_Myeloid[[1]]$labels)
+
+```
+
+
+```{r}
+hpca.ont <- celldex::HumanPrimaryCellAtlasData(ensembl=F, cell.ont="nonna")
+bpe.ont <- celldex::BlueprintEncodeData(ensembl=F, cell.ont="nonna")
+
+# Using the same sets of genes:
+shared <- intersect(rownames(hpca.ont), rownames(bpe.ont))
+hpca.ont_shared <- hpca.ont[shared,]
+bpe.ont_shared <- bpe.ont[shared,]
+
+ 
+```
+
+```{r}
+Mye_pred=list()
+Select_Data=SF_data_Myeloid
+ 
+for (i in 1:length(Select_Data)){
+  scdata=Select_Data[[i]]
+  Pred2= SingleR::SingleR(test =scdata, assay.type.test=1,  ref = list( HPCA=hpca.ont_shared,BPE=bpe.ont_shared ), 
+    labels = list(hpca.ont_shared$label.main,bpe.ont_shared$label.main))
+  
+  All_celltype=Pred2$pruned.labels%>%gsub("Monocytes","Monocyte" ,. )%>%gsub("Macrophages","Macrophage" ,. )%>%gsub("cells","cell" ,. )
+  #Pred= SingleR::SingleR(test =scdata, assay.type.test=1,  ref = hpca.ont,labels=hpca.ont $label.main)
+  #All_celltype_anno=data.frame(labels=All_celltype)%>%mutate(label2=ifelse(labels%in%Main_celltype,labels,"Other"))
+  #Pred$labels=All_celltype
+  Mye_pred[[i]]=All_celltype 
+ 
+  
+}
+
+
+```
+
+```{r,eval=T}
+# All_celltype_color=RColorBrewer::brewer.pal(n = 4, name = "Set1") 
+# names(All_celltype_color)=c(Mye_types) 
+
+Main_celltype=c("B_cell","T_cells","NK_cell","Monocyte","Neutrophils","Macrophage","DC" ,"Platelets")
+
+All_celltype_color=RColorBrewer::brewer.pal(n = 9, name = "Set1") 
+names(All_celltype_color)=c(Main_celltype,"Other") 
+```
+ 
+
+```{r,eval=T,fig.height=16,fig.width=12}
+Cell_anno=Mye_pred
+Data=SF_data_Myeloid
+figure_list=list()
+newcolor=All_celltype_color[Mye_types]
+# 
+# #Predict_data=Mye_pred
+# for (i in 1:length(sc_data)){
+#  set.seed(1234)
+#  sce=sc_data[[i]]
+#  #data=Clean_scdata[[i]]
+#  #sce <- logNormCounts(Seurat::as.SingleCellExperiment(data))
+#  dec <- modelGeneVarByPoisson(sce)
+#  sce2 <- denoisePCA(sce, dec, subset.row=getTopHVGs(dec, n=5000))
+#  colLabels(sce2) <- clusterRows(reducedDim(sce2), NNGraphParam())
+#  set.seed(117)
+#  scelist[[i]]<-scater::runTSNE(sce2, dimred="PCA")
+#  scelist[[i]]$labels=Mye_anno[[i]]$pruned.labels
+# #
+# 
+# }
+
+
+for(i in 1:length(Data)){
+ set.seed(1234)
+ sce=Data[[i]]
+ sce$labels=Cell_anno[[i]]
+ #sce$labels=gsub(NA,"Other",sce$labels)
+ dec <- modelGeneVarByPoisson(sce)
+ sce2 <- denoisePCA(sce, dec, subset.row=getTopHVGs(dec, n=5000))
+ nn <- RANN::nn2(reducedDim(sce2, "PCA"), k = 50)
+ names(nn) <- c("idx", "dist")
+ g <- buildKNNGraph(sce2, k = 30, use.dimred = "PCA")
+ reducedDim(sce2, "KNN") <- igraph::as_adjacency_matrix(g)
+
+
+# Run UMAP and rename it for comparisson temp <- umap::umap.defaults
+ try(reducedDim(sce2, "UMAP_on_Graph") <- NULL)
+ reducedDim(sce2, "UMAP_on_Graph") <- uwot::umap(X = NULL, n_neighbors=100,n_components = 200, nn_method = nn)
+
+ p1=scater:: plotReducedDim(sce2, dimred = "PCA", colour_by = "labels")+ggplot2::ggtitle(label = "UMAP_on_PCA")+scale_color_manual(values =newcolor )
+#p2=scater:: plotReducedDim(sce2, dimred = "KNN",colour_by = "labels")+ ggplot2::ggtitle(label = "UMAP_on_ScaleData")
+ p3=scater:: plotReducedDim(sce2,dimred = "UMAP_on_Graph", colour_by = "labels") + ggplot2::ggtitle(label = "UMAP_on_Graph")+scale_color_manual(values =newcolor )
+
+ figure_list[[i]]=cowplot::plot_grid(p1,p3,nrow=1)
+
+}
+              
+
+cowplot::plot_grid(plotlist = figure_list,nrow=3,labels=scdata_Samples_ID2$Sample_ID2,label_x = 0.35,label_y=1)
+ 
+```
+
+```{r,fig.height=16,fig.width=12}
+Cell_anno=Mye_pred
+Data=SF_data_Myeloid
+
+for (i in 1:length(Data)){
+ select_data=Cell_anno[[i]]
+ select_scdata=Data[[i]]
+ #all.markers <- metadata(select_data)$de.genes%>%.[unique(select_data)]
+ #select_scdata$labels <-select_data$labels 
+ Labels=intersect(unique(select_data),Main_celltype)%>%.[!grepl("Other",.)]
+
+ empirical.markers <- scran::findMarkers(select_scdata,groups=select_data, direction="up")
+ collected <- list()
+ for (lab in Labels) {
+  #  lab.markers <- unique(unlist(all.markers[[lab]]))
+  #  m <- match(lab.markers, rownames(empirical.markers[[lab]]))
+    m=rownames(empirical.markers[[lab]])[1:35]
+  #  m <- lab.markers[rank(m) <= 25]
+    collected[[lab]] <- scater::plotHeatmap(select_scdata, silent=TRUE,test.type="wilcox", order_columns_by="labels", main=lab, features=m)[[4]]
+  }
+ do.call(gridExtra::grid.arrange, collected)
+# cowplot::plot_grid(plotlist =collected,ncol=3)
+}
+```
+
+
+```{r,fig.height=18,fig.width=12,warning=F}
+# Need scelist
+scedata=scelist
+plot_list=list()
+for (i in 1:length(scedata)){
+ sce3=scedata[[i]]
+ newcolor=All_celltype_color
+ plot_list[[i]]=scater::plotTSNE(sce3, colour_by="labels")+scale_color_manual(values =newcolor )
+  
+
+}
+
+cowplot::plot_grid(plotlist = plot_list,nrow=5,labels=scdata_Samples_ID2$Sample_ID2)
+
+```
+
+```{r,fig.width=12,fig.height=10}
+Mye_types=c("Macrophage",  "DC",  "Neutrophil", "Monocyte")
+All_celltype_color=RColorBrewer::brewer.pal(n = 4, name = "Set1") 
+names(All_celltype_color)=c(Mye_types)
+```
+
+
+```{r,fig.width=12,fig.height=10}
+Data=SF_data_Myeloid
+figure_list=list()
+newcolor=All_celltype_color
+ 
+for(i in 1:length(Data)){
+set.seed(1234)
+sce=Data[[i]]
+sce$labels=gsub("s","",Mye_pred[[i]]$labels)
+sce$labels=factor(sce$labels,levels = unique(Mye_pred[[i]]$labels))
+dec <- modelGeneVarByPoisson(sce)
+sce2 <- denoisePCA(sce, dec, subset.row=getTopHVGs(dec, n=5000))
+nn <- RANN::nn2(reducedDim(sce2, "PCA"), k = 50)
+names(nn) <- c("idx", "dist")
+g <- buildKNNGraph(sce2, k = 30, use.dimred = "PCA")
+reducedDim(sce2, "KNN") <- igraph::as_adjacency_matrix(g)
+
+
+# Run UMAP and rename it for comparisson temp <- umap::umap.defaults
+try(reducedDim(sce2, "UMAP_on_Graph") <- NULL)
+reducedDim(sce2, "UMAP_on_Graph") <- uwot::umap(X = NULL, n_neighbors=100,n_components = 200, nn_method = nn)
+
+p1=scater:: plotReducedDim(sce2, dimred = "PCA", colour_by = "labels")+ggplot2::ggtitle(label = "UMAP_on_PCA")+scale_color_manual(values =newcolor )
+#p2=scater:: plotReducedDim(sce2, dimred = "KNN",colour_by = "labels")+ ggplot2::ggtitle(label = "UMAP_on_ScaleData")
+p3=scater:: plotReducedDim(sce2,dimred = "UMAP_on_Graph", colour_by = "labels") + ggplot2::ggtitle(label = "UMAP_on_Graph")+scale_color_manual(values =newcolor )
+
+figure_list[[i]]=cowplot::plot_grid(p1,p3,nrow=1)
+
+}
+              
+
+cowplot::plot_grid(plotlist = figure_list,nrow=3,labels=scdata_Samples_ID2$Sample_ID2)
+```
+
+```{r,fig.width=12,fig.height=16}
+
+pred.scData=Mye_pred[[1]]
+Data=SF_data_Myeloid[[1]]
+                     
+for (i in 1:length(pred.scData)){
+ select_data=pred.scData[[i]]
+ select_scdata=Data[[i]]
+ all.markers <- metadata(select_data)$de.genes%>%.[unique(select_data$labels)]
+ #select_scdata$labels <-select_data$labels 
+ Labels=intersect(unique(select_data$labels),Main_celltype)%>%.[!grepl("Other",.)]
+
+ empirical.markers <- scran::findMarkers(select_scdata,groups=select_data$labels, direction="up")
+ collected <- list()
+ for (lab in Labels) {
+    lab.markers <- unique(unlist(all.markers[[lab]]))
+    m <- match(lab.markers, rownames(empirical.markers[[lab]]))
+    m <- lab.markers[rank(m) <= 25]
+    collected[[lab]] <- scater::plotHeatmap(select_scdata, silent=TRUE, order_columns_by="labels", main=lab, features=m)[[4]]
+  }
+ do.call(gridExtra::grid.arrange, collected)
+# cowplot::plot_grid(plotlist =collected,ncol=3)
+}
+
+
+```
+
+```{r}
+knitr::knit_exit()
+```
+
+
+```{r,eval=F}
+
+Mye_pred=list()
+Select_Data=SF_data_Myeloid
+  
+for (i in 1:length(Select_Data)){
+  scdata=Select_Data[[i]]
+  Pred= SingleR::SingleR(test =scdata, ref = hpca.se, assay.type.test=1, labels =hpca.se$label.main,de.method="wilcox")
+  table(pred.scData$labels)
+  All_celltype=Pred$labels 
+  #All_celltype_anno=data.frame(labels=All_celltype)%>%mutate(label2=ifelse(labels%in%Main_celltype,labels,"Other"))
+  Pred$labels=All_celltype
+  Mye_pred[[i]]=Pred
+   
+}
+```
+
+
+```{r,eval=T}
+All_celltype_color=RColorBrewer::brewer.pal(n = 4, name = "Set1") 
+names(All_celltype_color)=c(Mye_types) 
+
+Main_celltype=c("B_cell","T_cells","NK_cell","Monocyte","Neutrophils","Macrophage","DC" ,"Platelets")
+
+All_celltype_color=RColorBrewer::brewer.pal(n = 9, name = "Set1") 
+names(All_celltype_color)=c(Main_celltype,"Other") 
+```
+
+
+
+# Inspired by http://bioconductor.org/books/release/SingleRBook/annotation-diagnostics.html#based-on-the-deltas-across-cells
+
+
+```{r,eval=F}
+scelist=list()
+sc_data=SF_data_Myeloid
+#Predict_data=Mye_pred
+for (i in 1:length(sc_data)){
+ set.seed(1234)
+ sce=sc_data[[i]]
+ #data=Clean_scdata[[i]]
+ #sce <- logNormCounts(Seurat::as.SingleCellExperiment(data))
+ dec <- modelGeneVarByPoisson(sce)
+ sce2 <- denoisePCA(sce, dec, subset.row=getTopHVGs(dec, n=5000))
+ colLabels(sce2) <- clusterRows(reducedDim(sce2), NNGraphParam())
+ set.seed(117)
+ scelist[[i]]<-scater::runTSNE(sce2, dimred="PCA")
+#
+
+}
+```
+
+```{r,include=F}
+#save(scData2,pred.scData,scelist,file=file.path(Rawdata_path,"Pred_scdata.rdata"))
+# load(file.path(Rawdata_path,"Pred_scdata.rdata")) # scData2: logscData with labels, Pred.data: singleR output, sce3
+# 
+# scdata_Samples_ID=lapply(scData2, function(x) as.character(x$orig.ident)%>%unique())%>%unlist()
+# scdata_Samples_ID2=data.frame(SRR_number=scdata_Samples_ID)%>%left_join(.,SRA_sample_anno)
+
+```
+
+```{r,fig.height=18,fig.width=12,warning=F}
+# Need scelist
+All_celltype_color=RColorBrewer::brewer.pal(n = 4, name = "Set1") 
+names(All_celltype_color)=c(Mye_types) 
+
+
+plot_list=list()
+for (i in 1:length(scelist)){
+ sce3=scelist[[i]]
+ newcolor=All_celltype_color[unique(sce3$labels)]
+ plot_list[[i]]=scater::plotTSNE(sce3, colour_by="labels")+scale_color_manual(values =newcolor )
+  
+
+}
+
+cowplot::plot_grid(plotlist = plot_list,nrow=5,labels=scdata_Samples_ID2$Sample_ID2)
+
+
+
+```
+
+
+```{r}
+i=1
+ sce=sc_data[[i]]
+
+dec <- modelGeneVarByPoisson(sce)
+sce2 <- denoisePCA(sce, dec, subset.row=getTopHVGs(dec, n=5000))
+nn <- RANN::nn2(reducedDim(sce2, "PCA"), k = 30)
+names(nn) <- c("idx", "dist")
+g <- buildKNNGraph(sce2, k = 30, use.dimred = "PCA")
+reducedDim(sce2, "KNN") <- igraph::as_adjacency_matrix(g)
+
+
+# Run UMAP and rename it for comparisson temp <- umap::umap.defaults
+try(reducedDim(sce2, "UMAP_on_Graph") <- NULL)
+reducedDim(sce2, "UMAP_on_Graph") <- uwot::umap(X = NULL, n_components = 2, nn_method = nn)
+
+```
+
+```{r}
+p1=scater:: plotReducedDim(sce2, dimred = "PCA", colour_by = "labels")+ggplot2::ggtitle(label = "UMAP_on_PCA")
+p2=scater:: plotReducedDim(sce2, dimred = "KNN",colour_by = "labels")+ ggplot2::ggtitle(label = "UMAP_on_ScaleData")
+p3=scater:: plotReducedDim(sce2,dimred = "UMAP_on_Graph", colour_by = "labels") + ggplot2::ggtitle(label = "UMAP_on_Graph")
+```
+
+```{r}
+p3
+```
+
+
+
+```{r,fig.width=12,fig.height=16}
+for (i in 1:length(pred.scData)){
+ select_data=pred.scData[[i]]
+ select_scdata=scData2[[i]]
+ all.markers <- metadata(select_data)$de.genes%>%.[unique(select_data$labels)]
+ #select_scdata$labels <-select_data$labels 
+ Labels=intersect(unique(select_data$labels),Main_celltype)%>%.[!grepl("Other",.)]
+
+ empirical.markers <- scran::findMarkers(select_scdata,groups=select_data$labels, direction="up")
+ collected <- list()
+ for (lab in Labels) {
+    lab.markers <- unique(unlist(all.markers[[lab]]))
+    m <- match(lab.markers, rownames(empirical.markers[[lab]]))
+    m <- lab.markers[rank(m) <= 25]
+    collected[[lab]] <- scater::plotHeatmap(select_scdata, silent=TRUE, order_columns_by="labels", main=lab, features=m)[[4]]
+  }
+ do.call(gridExtra::grid.arrange, collected)
+# cowplot::plot_grid(plotlist =collected,ncol=3)
+}
+
+
+```
+
+```{r}
+knitr::knit_exit()
+```
+
+
+## check 
+```{r}
+i=12
+select_data=pred.scData[[i]]
+select_scdata=scData2[[i]]
+to.remove2 <- pruneScores(select_data, min.diff.next=0)
+table(Label=select_data$labels, Removed=to.remove2)
+```
+
+
+```{r}
+all.markers <- metadata(select_data)$de.genes%>%.[unique(select_data$labels)]
+names(all.markers)
+T.markers <- unique(unlist(all.markers$T_cells))
+select_scdata$labels <-select_data$labels
+
+library(scater)
+#BiocManager::install ("scater")
+plotHeatmap(select_scdata, order_columns_by="labels", features=beta.markers)
+```
+
+```{r,fig.height=12,fig.width=10}
+library(scran)
+#BiocManager::install("scran")
+empirical.markers <- findMarkers(select_scdata, select_scdata$labels, direction="up")
+m <- match(T.markers, rownames(empirical.markers$beta))
+m <- beta.markers[rank(m) <= 40]
+
+library(scater)
+plotHeatmap(select_scdata, order_columns_by="labels", features=m,scale=F)
+```
+
+```{r,fig.height=12,fig.width=12}
+Main_celltypes=All_celltype_anno$labels[1:7]
+ 
+
+for (i in 1:length(pred.scData)){
+
+ select_data=pred.scData[[i]]
+ select_scdata=scData2[[i]]
+ all.markers <- metadata(select_data)$de.genes%>%.[unique(select_data$labels)]
+ select_scdata$labels <-select_data$labels  
+ empirical.markers <- findMarkers(select_scdata, select_scdata$labels, direction="up")
+ collected <- list()
+ #Labels=intersect(unique(select_data$labels),Main_celltypes)
+ for (lab in Labels) {
+    lab.markers <- unique(unlist(all.markers[[lab]]))
+    m <- match(lab.markers, rownames(empirical.markers[[lab]]))
+    m <- lab.markers[rank(m) <= 20]
+    collected[[lab]] <- plotHeatmap(select_scdata, silent=TRUE, order_columns_by="labels", main=lab, features=m)[[4]]
+  }
+ do.call(gridExtra::grid.arrange, collected)
+# cowplot::plot_grid(plotlist =collected,ncol=3)
+}
+
+
+```
+
+
+```{r}
+sce <- select_scdata
+dec <- modelGeneVarByPoisson(sce)
+sce2 <- denoisePCA(sce, dec, subset.row=getTopHVGs(dec, n=5000))
+nn <- RANN::nn2(reducedDim(sce2, "PCA"), k = 30)
+names(nn) <- c("idx", "dist")
+g <- buildKNNGraph(sce2, k = 30, use.dimred = "PCA")
+reducedDim(sce2, "KNN") <- igraph::as_adjacency_matrix(g)
+
+
+# Run UMAP and rename it for comparisson temp <- umap::umap.defaults
+try(reducedDim(sce2, "UMAP_on_Graph") <- NULL)
+reducedDim(sce2, "UMAP_on_Graph") <- uwot::umap(X = NULL, n_components = 2, nn_method = nn)
+
+```
+
+```{r}
+p1=plotReducedDim(sce2, dimred = "PCA", colour_by = "labels")+ggplot2::ggtitle(label = "UMAP_on_PCA")
+p2= plotReducedDim(sce2, dimred = "KNN",colour_by = "labels")+ ggplot2::ggtitle(label = "UMAP_on_ScaleData")
+p3= plotReducedDim(sce2,dimred = "UMAP_on_Graph", colour_by = "labels") + ggplot2::ggtitle(label = "UMAP_on_Graph")
+```
+
+
+```{r,fig.width=10,fig.height=6}
+cowplot::plot_grid(ncol = 3, plotlist = list(p1,p2,p3))
+
+```
+
+
+```{r}
+plotlist <- list()
+for (i in c("CD3E", "CD4", "CD8A", "NKG7", "GNLY", "MS4A1", "CD14", "LYZ", "MS4A7",
+    "FCGR3A", "CST3", "FCER1A")) {
+    plotlist[[i]] <- plotReducedDim(sce2, dimred = "UMAP_on_PCA", colour_by = i, by_exprs_values = "logcounts") +
+        scale_fill_gradientn(colours = colorRampPalette(c("grey90", "orange3", "firebrick",
+            "firebrick", "red", "red"))(10)) + ggtitle(label = i) + theme(plot.title = element_text(size = 20))
+}
+plot_grid(ncol = 3, plotlist = plotlist)
+```
+
+
+```{r}
+knitr::knit_exit()
+```
+
+
+```{r}
+#library(patchwork)
+
+Raw_scdata=list()
+ggfigure=list()
+for ( i in SRA_sample_anno$SRR_number ) {
+ case1=i
+ SC_out=file.path(SRR_path,case1,"run_count","outs","filtered_feature_bc_matrix" )
+ pbmc.data=Read10X(data.dir = SC_out)
+
+ pbmc <- CreateSeuratObject(counts = pbmc.data, project = case1, min.cells = 3, min.features = 200)
+ pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+ Raw_scdata[[i]]=pbmc
+# Visualize QC metrics as a violin plot
+ ggfigure[[i]]=VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+ 
+}
+ 
+```
+
+
+```{r,fig.width=16,fig.height=32,eval=F}
+Out=cowplot::plot_grid(ggfigure,nrow=length(ggfigure),labels = names(ggfigure) )
+ggfigure[[2]]
+p2=ggfigure[[2]]
+p3=ggfigure[[3]]
+library(ggplot2)
+library(gtable)
+g2 <- ggplotGrob(p2)
+g3 <- ggplotGrob(p3)
+g <- rbind(g2, g3, size = "first")
+g$widths <- grid::unit.pmax(g2$widths, g3$widths)
+grid::grid.newpage()
+grid::grid.draw()
+
+ 
+```
+
+
+```{r,fig.width=16,fig.height=32,include=T}
+cowplot::plot_grid(ggfigure[[1]],ggfigure[[2]],ggfigure[[3]],ggfigure[[4]],ggfigure[[5]],ggfigure[[6]],ggfigure[[7]],ggfigure[[8]],ggfigure[[9]],ggfigure[[10]], ggfigure[[11]],ggfigure[[12]],ggfigure[[13]],ggfigure[[14]],ggfigure[[15]],ncol=3,nrow=5,labels = names(ggfigure),label_y = 1.01)
+
+```
+
+```{r}
+Metadata=list()
+for ( i in names(Raw_scdata) ) {
+   Data=Raw_scdata[[i]]
+   Metadata[[i]]=data.frame(nGene=Data[["nCount_RNA"]],nUMI=Data[["nFeature_RNA"]],Percent_MT=Data[["percent.mt"]])%>%setNames(c("nGene","nUMI","percent.mito"))
+}
+
+Metadata[[1]]
+names(Metadata)
+```
+# filter cells (https://matthieuxmoreau.github.io/EarlyPallialNeurogenesis/html-Reports/Quality_Control.html)
+
+```{r}
+Clean_cell_list=list()
+plot_list=list()
+for (i in names(Metadata) ){
+ 
+   # Set low and high thresholds Mito percentage
+  Cell.QC.Stat=Metadata[[i]]
+  
+  max.mito.thr <- median(Cell.QC.Stat$percent.mito) + 3*mad(Cell.QC.Stat$percent.mito)
+  min.mito.thr <- median(Cell.QC.Stat$percent.mito) - 3*mad(Cell.QC.Stat$percent.mito)
+  p1 <- ggplot(Cell.QC.Stat, aes(x=nGene, y=percent.mito)) +
+      geom_point() +geom_hline(aes(yintercept = max.mito.thr), colour = "red", linetype = 2) +
+      geom_hline(aes(yintercept = min.mito.thr), colour = "red", linetype = 2) +
+      annotate(geom = "text",size=2 ,label = paste0(as.numeric(table(Cell.QC.Stat$percent.mito > max.mito.thr | Cell.QC.Stat$percent.mito < min.mito.thr)[2])," cells removed\n", as.numeric(table(Cell.QC.Stat$percent.mito > max.mito.thr | Cell.QC.Stat$percent.mito < min.mito.thr)[1])," cells remain"), x = max(Cell.QC.Stat$nGene)/2, y = max(Cell.QC.Stat$percent.mito)/2)
+p1=ggExtra::ggMarginal(p1, type = "histogram", fill="lightgrey", bins=100)   
+p1
+Cell.QC.Stat2 <- Cell.QC.Stat %>% filter(percent.mito < max.mito.thr) %>% filter(percent.mito > min.mito.thr)
+ 
+# Set high threshold on the number of transcripts
+max.nUMI.thr <- median(log10(Cell.QC.Stat2$nUMI)) + 3*mad(log10(Cell.QC.Stat$nUMI))
+min.Genes.thr <- median(log10(Cell.QC.Stat2$nGene)) - 3*mad(log10(Cell.QC.Stat2$nGene))
+max.Genes.thr <- median(log10(Cell.QC.Stat2$nGene)) + 3*mad(log10(Cell.QC.Stat2$nGene))
+
+ # Gene/UMI scatter plot before filtering
+p2 <- ggplot(Cell.QC.Stat2, aes(x=log10(nUMI), y=log10(nGene))) +
+      geom_point() +
+      geom_smooth(method="lm") +
+      geom_hline(aes(yintercept = min.Genes.thr), colour = "green", linetype = 2) +
+      geom_hline(aes(yintercept = max.Genes.thr), colour = "green", linetype = 2) +
+      geom_vline(aes(xintercept = max.nUMI.thr), colour = "red", linetype = 2)
+
+p2=ggExtra::ggMarginal(p2, type = "histogram", fill="lightgrey")
+  
+  # Set low and hight thresholds on the number of detected genes
+
+
+
+
+# filtered by nGene and uUMI
+Cell.QC.Stat3 <- Cell.QC.Stat2 %>% filter(log10(nGene) > min.Genes.thr) %>% filter(log10(nUMI) < max.nUMI.thr)
+lm.model <- lm(data = Cell.QC.Stat2, formula = log10(nGene) ~ log10(nUMI))
+p3 <- ggplot(Cell.QC.Stat3, aes(x=log10(nUMI), y=log10(nGene))) +
+  geom_point() +
+  geom_smooth(method="lm") +
+  geom_hline(aes(yintercept = min.Genes.thr), colour = "green", linetype = 2) +
+  geom_hline(aes(yintercept = max.Genes.thr), colour = "green", linetype = 2) +
+  geom_vline(aes(xintercept = max.nUMI.thr), colour = "red", linetype = 2) +
+  geom_abline(intercept =lm.model$coefficients[1] - 0.2 , slope = lm.model$coefficients[2], color="orange") +
+  annotate(geom = "text", size=2,label = paste0(dim(Cell.QC.Stat3)[1], " QC passed cells"), x =3.5, y = 4.5)
+
+p3=ggExtra::ggMarginal(p3, type = "histogram", fill="lightgrey")
+#  Cells to exclude lie below an intersept offset of -0.18
+Cell.QC.Stat3$valideCells <- log10(Cell.QC.Stat3$nGene) > (log10(Cell.QC.Stat3$nUMI) * lm.model$coefficients[2] + 
+                                                           (lm.model$coefficients[1] - 0.2))
+
+p4 <- ggplot(Cell.QC.Stat3, aes(x=log10(nUMI), y=log10(nGene))) +
+  geom_point(aes(colour = valideCells)) +
+  geom_smooth(method="lm") +
+  geom_abline(intercept = lm.model$coefficients[1] - 0.2 , slope = lm.model$coefficients[2], color="orange") + 
+  theme(legend.position="none") +
+  annotate(geom = "text",size=2, label = paste0(as.numeric(table(Cell.QC.Stat$valideCells)[2]), " QC passed cells\n",
+                                         as.numeric(table(Cell.QC.Stat$valideCells)[1]), " QC filtered"), x = 4, y = 3.8)
+
+p4 
+# Remove unvalid cells
+Cell.QC.Stat4 <- Cell.QC.Stat3 %>% filter(valideCells)  
+ 
+Clean_cell_list[[i]]=Cell.QC.Stat4
+
+plot_row=cowplot::plot_grid(p1,p2,p3,p4,nrow=1)
+title <- cowplot::ggdraw() + 
+  cowplot::draw_label(i,
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )
+out=cowplot::plot_grid(
+  title, plot_row,
+  ncol = 1,
+  # rel_heights values control vertical title margins
+  rel_heights = c(0.1, 1)
+)
+ plot_list[[i]]=out
+}
+
+ 
+ 
+```
+# Plot filter process
+```{r,fig.width=18,fig.height=24,include=T}
+library(gridExtra)
+do.call("grid.arrange", c(plot_list, ncol=2,nrow=8))
+```
+
+```{r}
+Clean_scdata=list()
+for (i in 1:length(Raw_scdata)){
+Clean_data=Clean_cell_list[[i]]
+
+Clean_ID=Clean_data%>%mutate(State="Good",ID=rownames(.))
+scData=Raw_scdata[[i]]
+scData[["CellName"]]=colnames(scData)
+Clean_scdata[[i]]= subset(scData , subset = CellName %in% rownames(Clean_data))
+
+}
+
+```
+```{r}
+#save(SRA_sample_anno,Clean_scdata,file=file.path(Rawdata_path,"Clean_scRNA_and_metadata.rdata")
+ 
+```
+
+
+```{r}
+knitr::knit_exit()
+```
+
+```{r,fig.width=10}
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+```{r}
+save(SRA_sample_anno,clean)
+
+```
+
+```{r}
+pbmc_norm <- NormalizeData(pbmc_subset, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
