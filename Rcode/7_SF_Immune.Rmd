@@ -103,7 +103,7 @@ table(sce_combine2$labels)
 P1=scater::plotUMAP(sce_combine2, colour_by="Kmeans",,text_by="Kmeans") 
 P2=scater::plotUMAP(sce_combine2, colour_by="labels",,text_by="labels")
 
-Classical_kmeans=data.frame(Cluster=sce_combine2$Kmeans,Subtype=sce_combine2$labels)%>%mutate(Subtype=gsub("Monocyte","Macrophage",Subtype))%>%mutate(Subtype=ifelse(Subtype=="Macrophage"&Cluster%in%c(4,5),"M1_macro", ifelse(Subtype=="Macrophage","M2_macro",Subtype )))
+Classical_kmeans=data.frame(Cluster=sce_combine2$Kmeans,Subtype=sce_combine2$labels)%>%mutate(Subtype=gsub("Monocyte","Macrophage",Subtype))%>%mutate(Subtype=ifelse(Subtype=="Macrophage"&Cluster%in%c(4,5),"M2_macro", ifelse(Subtype=="Macrophage","M1_macro",Subtype )))
 table(Classical_kmeans$Subtype)
 sce_combine2$Subtype=Classical_kmeans$Subtype
 SF_data_sce=sce_combine2
