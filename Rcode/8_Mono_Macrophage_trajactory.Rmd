@@ -1,0 +1,177 @@
+---
+title: "Trajectory of PMBC Monocyte an macropahge"
+author: "`r config::get(file = 'Config.yml')$document$author`"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    keep_tex: true
+    latex_engine: pdflatex
+    fig_caption: yes
+    highlight: haddock
+    number_sections: yes
+knit: (
+  function(inputFile, encoding) {
+    Config=config::get(file = 'Config.yml') 
+    
+    pSubTitle <- paste0("SF immune",".pdf")
+    
+    base_output_dir <- Config$base_output_dir
+ 
+    rmarkdown::render( 
+      input       = inputFile, 
+      encoding    = encoding, 
+      output_file = pSubTitle,
+      output_dir = base_output_dir )}
+    )
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F,include=F,warning=F)
+```
+
+
+
+```{r,include=F}
+rm(list=ls())
+#install.packages('Seurat')
+#BiocManager::install("scran")
+# BiocManager::install("S4Vectors")
+# BiocManager::install("cytolib")
+# BiocManager::install("scuttle")
+#BiocManager::install("scMerge")
+
+
+# install.packages('ggrastr')
+#BiocManager::install("scater")
+#remotes::install_version("Matrix", version = "1.6-1")
+library("scater")
+#BiocManager::install("SingleR")
+library(dplyr)
+library(ggplot2)
+library(scran)
+library(scuttle)
+library(bluster)
+library(SingleR)
+#library("Seurat")
+
+```
+
+
+```{r,include=T}
+Config=config::get(file = 'Config.yml')
+Path=Config$Path
+Rawdata_path=file.path(Path, "R/Rawdata")
+Rcode_path=file.path(Path, "R/Rcode")
+```
+
+
+
+```{r,include=F}
+# Sample annotation
+SRA_sample=read.csv(file.path(Rawdata_path,"SraRunInfo.csv" ))
+SRA_sample_anno=SRA_sample[,c("LibraryName","Run")]%>%mutate(Group=c(rep("Gout_SYN",3),rep("Gout_PBMC",7),rep("Control_PBMC",5)))%>%setNames(c("Sample_ID","SRR_number","Group"))
+scdata_Samples_ID2=SRA_sample[,c("LibraryName","Run")]%>%mutate(Group=c(rep("Gout_SYN",3),rep("Gout_PBMC",7),rep("Control_PBMC",5)))%>%setNames(c("Sample_ID","SRR_number","Group"))%>%mutate(Sample_ID2=c(paste0("Gout_SYN_",c(1:3)),paste0("Gout_PBMC_",c(1:7)),paste0("Control_PBMC_",c(1:5)) ))
+```
+
+
+```{r,include=T}
+knitr::kable(scdata_Samples_ID2,caption = "Sample information")
+```
+
+
+```{r,eval=F}
+# 
+# Myeloid data from SF 
+
+load(file.path(Rawdata_path,"Three_synoval_immune.rdata")) # immune cells in synovial 
+
+# load PBMC monocyte
+load(file.path(Rawdata_path,"Classical_mono_subtype.rdata"))
+cgwtools::lsdata(file.path(Rawdata_path,"Classical_mono_subtype.rdata"))
+```
+
+
+```{r,eval=T}
+Main_celltype=c("B_cell","CD4+_T_cell","CD8+_T_cell","T_cell","NK_cell","Monocyte","Neutrophils","Macrophage","DC" ,"Platelets")
+All_celltype_color=c(RColorBrewer::brewer.pal(n = 9, name = "Set1") ,RColorBrewer::brewer.pal(n = 2, name = "Set2"))
+names(All_celltype_color)=c(Main_celltype,"Other")
+```
+
+
+```{r,eval=T}
+Mono_expression=counts(PBMC_Monocyte_sce3 )
+PBMC_Monocyte_sce3$Subtype=PBMC_Monocyte_sce3$Mono_subtype2
+Mono_coldata=colData(PBMC_Monocyte_sce3)[,c("CellName","batch","Subtype")]
+```
+
+
+```{r,eval=T}
+
+
+SF_data_sce_Macro=subset(SF_data_sce,,Subtype%in%c( "M1_macro","M2_macro" ))
+Macro_expression=counts(SF_data_sce_Macro)
+Macro_coldata=colData(SF_data_sce_Macro)[,c("CellName","batch","Subtype")]
+
+common_genes=intersect(rownames(Macro_expression),rownames(Mono_expression))
+
+All_expression=base::cbind(Mono_expression[common_genes,],Macro_expression[common_genes,])
+
+All_coldata=rbind(Mono_coldata,Macro_coldata)
+
+rownames(All_coldata)=paste0(All_coldata$batch,"_",All_coldata$CellName)
+colnames(All_expression)=rownames(All_coldata)
+```
+
+
+```{r}
+if ( !file.exists(file.path(Path,"PBMC_Mono_Macropahge_monocle.rdata"))){
+
+cds <-monocle3::new_cell_data_set(
+  expression_data = All_expression,
+  cell_metadata = All_coldata
+)
+
+
+# Normalize and preprocess data
+cds2 <- monocle3::preprocess_cds(cds, num_dim = 50,norm_method = c("log"),scaling = TRUE)
+
+# Reduce dimensionality
+cds3 <- monocle3:: reduce_dimension(cds2)
+cds4 <- monocle3:: cluster_cells(cds3)
+
+# Learn the trajectory
+cds5 <- monocle3:: learn_graph(cds4, use_partition = F)
+cds6<- monocle3:: order_cells(cds5)
+
+#cds6 =monocle3::order_cells(cds5)
+P1=monocle3::plot_cells(cds6,
+           color_cells_by = "Subtype",group_label_size = 3.5,
+           label_groups_by_cluster=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE)
+
+
+P2=monocle3::plot_cells(cds6,
+           color_cells_by = "pseudotime",group_label_size = 3.5,
+           label_groups_by_cluster=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE)
+save(P1,P2,cds6,file=file.path(Path,"PBMC_Mono_Macropahge_monocle.rdata"))
+
+} else{
+  
+  load(file.path(Path,"PBMC_Mono_Macropahge_monocle.rdata"))
+}
+```
+
+```{r,include=T,fig.width=12,fig.height=6}
+cowplot::plot_grid(P1,P2,nrow=1)
+```
+
+
+```{r}
+knitr::knit_exit()
+```
+
+
